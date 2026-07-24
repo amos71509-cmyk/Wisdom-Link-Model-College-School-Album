@@ -211,7 +211,6 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
         await updateGraduationMemoryThumbnail(editingThumbnailMemory.id, finalThumb);
         triggerFeedback('success', 'Video thumbnail updated successfully!');
         setEditingThumbnailMemory(null);
-        setThumbnailUploading(false);
         return;
       }
 
@@ -219,24 +218,13 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
         await updateGraduationMemoryThumbnail(editingThumbnailMemory.id, finalThumb);
         triggerFeedback('success', 'Video thumbnail updated successfully!');
         setEditingThumbnailMemory(null);
+      } else {
+        triggerFeedback('error', 'Please select an image file or provide an image URL.');
       }
     } catch (err: any) {
       console.error("Failed to update thumbnail:", err);
       triggerFeedback('error', err.message || 'Failed to update thumbnail');
     } finally {
-      setThumbnailUploading(false);
-    }
-  };
-        triggerFeedback('success', 'Video thumbnail updated successfully!');
-        setEditingThumbnailMemory(null);
-      } else {
-        triggerFeedback('error', 'Please select an image file or provide an image URL.');
-      }
-      setThumbnailUploading(false);
-
-    } catch (err) {
-      console.error(err);
-      triggerFeedback('error', 'Failed to update video thumbnail.');
       setThumbnailUploading(false);
     }
   };
