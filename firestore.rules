@@ -1,0 +1,380 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==========================================
+    // GLOBAL SECURITY HELPERS & PRIMITIVES
+    // ==========================================
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true || 
+        request.auth.token.firebase.sign_in_provider == 'google.com'
+      );
+    }
+    
+    // Check if the user is an authorized administrator
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "justfashion414@gmail.com" ||
+        request.auth.token.email == "adesegunakinye416@gmail.com" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email))
+      );
+    }
+    
+    // Helper to check if the database has not been seeded yet
+    function isNotSeeded() {
+      return !exists(/databases/$(database)/documents/system/seed_status);
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // ENTITY VALIDATION HELPERS
+    // ==========================================
+
+    function isValidStudent(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.image is string && data.image.size() <= 2048;
+    }
+
+    function isValidSuperlative(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.category is string && data.category.size() <= 200 &&
+             data.studentName is string && data.studentName.size() <= 200;
+    }
+
+    function isValidTribute(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.message is string && data.message.size() <= 5000;
+    }
+
+    function isValidTimelineEvent(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.date is string && data.date.size() <= 64 &&
+             data.title is string && data.title.size() <= 200;
+    }
+
+    function isValidGuestbookEntry(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.message is string && data.message.size() <= 2000 &&
+             data.timestamp is string && data.timestamp.size() <= 64;
+    }
+
+    function isValidPhoto(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.url is string && data.url.size() <= 2048;
+    }
+
+    function isValidVideo(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.url is string && data.url.size() <= 2048 &&
+             data.title is string && data.title.size() <= 200;
+    }
+
+    function isValidCustomSection(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.layoutType is string && data.layoutType.size() <= 64;
+    }
+
+    function isValidPendingSubmission(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.type is string && data.type.size() <= 128 &&
+             data.submittedAt is string && data.submittedAt.size() <= 64 &&
+             data.data is map &&
+             (!('status' in data) || (data.status is string && data.status.size() <= 64)) &&
+             (!('approved' in data) || data.approved is bool) &&
+             (!('approvedAt' in data) || (data.approvedAt is string && data.approvedAt.size() <= 64)) &&
+             (!('approvedBy' in data) || (data.approvedBy is string && data.approvedBy.size() <= 200)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+             (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 2000)) &&
+             (!('rejectedAt' in data) || (data.rejectedAt is string && data.rejectedAt.size() <= 64)) &&
+             (!('rejectedBy' in data) || (data.rejectedBy is string && data.rejectedBy.size() <= 200));
+    }
+
+    function isValidCommunityMemory(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.caption is string && data.caption.size() <= 10000 &&
+             data.contributorName is string && data.contributorName.size() <= 200 &&
+             data.studentName is string && data.studentName.size() <= 200 &&
+             data.className is string && data.className.size() <= 200 &&
+             data.eventCategory is string && data.eventCategory.size() <= 200 &&
+             data.mediaType is string && data.mediaType.size() <= 64 &&
+             data.mediaUrl is string && data.mediaUrl.size() <= 10485760 &&
+             data.thumbnailUrl is string && data.thumbnailUrl.size() <= 10485760 &&
+             data.uploadDate is string && data.uploadDate.size() <= 64 &&
+             data.status is string && data.status.size() <= 64 &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             data.updatedAt is string && data.updatedAt.size() <= 64 &&
+             data.featured is bool &&
+             (!('approvedBy' in data) || (data.approvedBy is string && data.approvedBy.size() <= 200)) &&
+             (!('approvedDate' in data) || (data.approvedDate is string && data.approvedDate.size() <= 64)) &&
+             (!('approved' in data) || data.approved is bool) &&
+             (!('approvedAt' in data) || (data.approvedAt is string && data.approvedAt.size() <= 64)) &&
+             (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 2000));
+    }
+
+    function isValidComment(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.mediaId is string && data.mediaId.size() <= 2048 &&
+             data.mediaTitle is string && data.mediaTitle.size() <= 500 &&
+             data.mediaType is string && (data.mediaType == "photo" || data.mediaType == "video") &&
+             data.authorName is string && data.authorName.size() <= 200 &&
+             data.text is string && data.text.size() <= 2000 &&
+             data.submittedAt is string && data.submittedAt.size() <= 64 &&
+             data.status is string && (data.status == "Pending" || data.status == "Approved" || data.status == "Rejected") &&
+             (!('approvedAt' in data) || (data.approvedAt is string && data.approvedAt.size() <= 64)) &&
+             (!('approvedBy' in data) || (data.approvedBy is string && data.approvedBy.size() <= 200)) &&
+             (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 2000));
+    }
+
+    function isValidGraduationStudent(data) {
+      return data.studentId is string && data.studentId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() <= 200 &&
+             data.graduationYear is string && data.graduationYear.size() <= 64 &&
+             data.graduationCategory is string && data.graduationCategory.size() <= 128 &&
+             (!('class' in data) || (data.class is string && data.class.size() <= 128)) &&
+             data.status is string && (data.status == "Imported" || data.status == "Pending" || data.status == "Approved" || data.status == "Rejected") &&
+             data.profileCompleted is bool &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             (!('profilePicture' in data) || (data.profilePicture is string && data.profilePicture.size() <= 10485760)) &&
+             (!('gallery' in data) || (data.gallery is list && data.gallery.size() <= 20)) &&
+             (!('favoriteMemory' in data) || (data.favoriteMemory is string && data.favoriteMemory.size() <= 10000)) &&
+             (!('futureAmbition' in data) || (data.futureAmbition is string && data.futureAmbition.size() <= 5000)) &&
+             (!('quote' in data) || (data.quote is string && data.quote.size() <= 2000)) &&
+             (!('parentAppreciation' in data) || (data.parentAppreciation is string && data.parentAppreciation.size() <= 5000));
+    }
+
+    function isValidGraduationSettings(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.submissionsOpen is bool &&
+             data.deadline is string && data.deadline.size() <= 64 &&
+             data.enabledCategories is list && data.enabledCategories.size() <= 10 &&
+             data.maxImages is int &&
+             data.acceptedFormats is list && data.acceptedFormats.size() <= 20;
+    }
+
+    function isValidGraduationMemory(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             (!('title' in data) || data.title == null || (data.title is string && data.title.size() <= 500)) &&
+             (!('eventName' in data) || data.eventName == null || (data.eventName is string && data.eventName.size() <= 200)) &&
+             data.graduationYear is string && data.graduationYear.size() <= 64 &&
+             data.uploadedByType is string && data.uploadedByType.size() <= 128 &&
+             data.memoryType is string && data.memoryType.size() <= 128 &&
+             data.mediaType is string && (data.mediaType == 'image' || data.mediaType == 'video') &&
+             data.mediaUrl is string && data.mediaUrl.size() <= 10485760 &&
+             (!('thumbnailUrl' in data) || data.thumbnailUrl == null || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 10485760)) &&
+             data.caption is string && data.caption.size() <= 10000 &&
+             data.status is string && (data.status == 'Pending' || data.status == 'Approved' || data.status == 'Rejected') &&
+             (!('likesCount' in data) || data.likesCount == null || data.likesCount is int) &&
+             (!('commentsCount' in data) || data.commentsCount == null || data.commentsCount is int) &&
+             (!('uploaderName' in data) || data.uploaderName == null || (data.uploaderName is string && data.uploaderName.size() <= 200)) &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             data.updatedAt is string && data.updatedAt.size() <= 64 &&
+             (!('approvedBy' in data) || data.approvedBy == null || (data.approvedBy is string && data.approvedBy.size() <= 200)) &&
+             (!('approvedAt' in data) || data.approvedAt == null || (data.approvedAt is string && data.approvedAt.size() <= 64)) &&
+             (!('rejectedBy' in data) || data.rejectedBy == null || (data.rejectedBy is string && data.rejectedBy.size() <= 200)) &&
+             (!('rejectedAt' in data) || data.rejectedAt == null || (data.rejectedAt is string && data.rejectedAt.size() <= 64)) &&
+             (!('rejectionReason' in data) || data.rejectionReason == null || (data.rejectionReason is string && data.rejectionReason.size() <= 2000));
+    }
+
+    function isValidGraduationMemoryComment(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.memoryId is string && data.memoryId.size() <= 128 &&
+             data.authorName is string && data.authorName.size() <= 200 &&
+             (!('authorRole' in data) || data.authorRole == null || (data.authorRole is string && data.authorRole.size() <= 128)) &&
+             data.text is string && data.text.size() <= 2000 &&
+             data.status is string && (data.status == 'Pending' || data.status == 'Approved' || data.status == 'Rejected') &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             (!('approvedBy' in data) || data.approvedBy == null || (data.approvedBy is string && data.approvedBy.size() <= 200)) &&
+             (!('approvedAt' in data) || data.approvedAt == null || (data.approvedAt is string && data.approvedAt.size() <= 64));
+    }
+
+    // ==========================================
+    // PATH MATCHING & PERMISSIONS
+    // ==========================================
+
+    match /students/{studentId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(studentId) && isValidStudent(incoming());
+      allow update: if isAdmin() && isValidStudent(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /superlatives/{superlativeId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(superlativeId) && isValidSuperlative(incoming());
+      allow update: if isAdmin() && isValidSuperlative(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /teacher_tributes/{tributeId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(tributeId) && isValidTribute(incoming());
+      allow update: if isAdmin() && isValidTribute(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /timeline/{eventId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(eventId) && isValidTimelineEvent(incoming());
+      allow update: if isAdmin() && isValidTimelineEvent(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /guestbook/{entryId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(entryId) && isValidGuestbookEntry(incoming());
+      allow update: if isAdmin() && isValidGuestbookEntry(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /videos/{videoId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(videoId) && isValidVideo(incoming());
+      allow update: if isAdmin() && isValidVideo(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /photos/{photoId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(photoId) && isValidPhoto(incoming());
+      allow update: if isAdmin() && isValidPhoto(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /custom_sections/{sectionId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(sectionId) && isValidCustomSection(incoming());
+      allow update: if isAdmin() && isValidCustomSection(incoming());
+      allow delete: if isAdmin();
+    }
+    
+    match /branding/{configId} {
+      allow read: if true;
+      allow write: if isAdmin() || isNotSeeded();
+    }
+    
+    match /system/{statusId} {
+      allow read: if true;
+      allow write: if isAdmin() || isNotSeeded();
+    }
+
+    // Website Content Management System (CMS) configurations
+    match /cms_content/{docId} {
+      allow read: if true;
+      allow write: if isAdmin() || isNotSeeded();
+    }
+    
+    // Admins list can be read by authenticated users, written only by existing admins.
+    // Immutable protection: Primary administrator email justfashion414@gmail.com is hardcoded and cannot be deleted or modified.
+    match /admins/{email} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && email != "justfashion414@gmail.com" && incoming().email == email;
+      allow update: if isAdmin() && email != "justfashion414@gmail.com" && incoming().email == email;
+      allow delete: if isAdmin() && email != "justfashion414@gmail.com";
+    }
+    
+    // Public can submit items to moderation queue (create).
+    // Only admins can read, update, or delete pending items from the queue.
+    match /submissions/{submissionId} {
+      allow read: if isAdmin();
+      allow create: if isValidId(submissionId) && isValidPendingSubmission(incoming());
+      allow update: if isAdmin() && isValidPendingSubmission(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Community memories can be read/listed by anyone.
+    // Anyone can create a pending memory submission.
+    // Only admins can approve, update or delete them.
+    match /community_memories/{memoryId} {
+      allow read: if true;
+      allow create: if isValidId(memoryId) && 
+                    isValidCommunityMemory(incoming()) && 
+                    incoming().status == 'Pending' && 
+                    incoming().featured == false &&
+                    incoming().keys().hasAll(['id', 'title', 'caption', 'contributorName', 'studentName', 'className', 'eventCategory', 'mediaType', 'mediaUrl', 'thumbnailUrl', 'uploadDate', 'status', 'createdAt', 'updatedAt', 'featured']) &&
+                    incoming().keys().size() == 15;
+      allow update: if isAdmin() && isValidCommunityMemory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Comments can be read/listed by anyone.
+    // Anyone can create a pending comment.
+    // Only admins can approve, update or delete them.
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isValidId(commentId) && 
+                    isValidComment(incoming()) && 
+                    incoming().status == 'Pending';
+      allow update: if isAdmin() && isValidComment(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Likes rules: anyone can read, create, or delete (to toggle unlike)
+    match /likes/{likeId} {
+      allow read: if true;
+      allow create: if isValidId(likeId) &&
+                    incoming().mediaId is string && incoming().mediaId.size() <= 2048 &&
+                    incoming().userId is string && incoming().userId.size() <= 128 &&
+                    incoming().createdAt is string && incoming().createdAt.size() <= 64;
+      allow delete: if true;
+    }
+
+    // Graduation Management Rules
+    match /graduation_students/{studentId} {
+      allow read: if true;
+      allow create: if (isAdmin() || isNotSeeded()) && isValidId(studentId) && isValidGraduationStudent(incoming());
+      allow update: if (isAdmin() || (incoming().status == "Pending" && !existing().profileCompleted)) && isValidGraduationStudent(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /graduation_settings/{settingsId} {
+      allow read: if true;
+      allow write: if isAdmin() || isNotSeeded();
+    }
+
+    match /graduation_memories/{memoryId} {
+      allow read: if true;
+      allow create: if isValidId(memoryId) &&
+                    isValidGraduationMemory(incoming()) &&
+                    (incoming().status == 'Pending' || isAdmin());
+      allow update: if (isAdmin() || (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'updatedAt']))) &&
+                    isValidGraduationMemory(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /graduation_memory_comments/{commentId} {
+      allow read: if true;
+      allow create: if isValidId(commentId) &&
+                    isValidGraduationMemoryComment(incoming()) &&
+                    incoming().status == 'Pending';
+      allow update: if isAdmin() && isValidGraduationMemoryComment(incoming());
+      allow delete: if isAdmin();
+    }
+  }
+}

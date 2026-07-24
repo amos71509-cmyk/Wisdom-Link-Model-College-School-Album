@@ -1,0 +1,318 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Graduand profile details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "nickname": { "type": "string" },
+        "image": { "type": "string" },
+        "favoriteMemory": { "type": "string" },
+        "messageToClassmates": { "type": "string" },
+        "aspirations": { "type": "string" },
+        "house": { "type": "string" }
+      },
+      "required": ["id", "name", "image"]
+    },
+    "Superlative": {
+      "title": "Superlative",
+      "description": "Student superlatives and awards",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentImage": { "type": "string" }
+      },
+      "required": ["id", "category", "studentName"]
+    },
+    "TeacherTribute": {
+      "title": "TeacherTribute",
+      "description": "Tributes written to or by teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "subject": { "type": "string" },
+        "image": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "required": ["id", "name", "message"]
+    },
+    "TimelineEvent": {
+      "title": "TimelineEvent",
+      "description": "Chronological milestone of the school years",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "image": { "type": "string" }
+      },
+      "required": ["id", "date", "title"]
+    },
+    "GuestbookEntry": {
+      "title": "GuestbookEntry",
+      "description": "Public guestbook signature",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "name", "message", "timestamp"]
+    },
+    "VideoMemory": {
+      "title": "VideoMemory",
+      "description": "Shared video memory clip",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "submittedBy": { "type": "string" },
+        "role": { "type": "string" },
+        "uploadedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "url"]
+    },
+    "Photo": {
+      "title": "Photo",
+      "description": "Shared photo memory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "submittedBy": { "type": "string" },
+        "role": { "type": "string" },
+        "uploadedAt": { "type": "string" }
+      },
+      "required": ["id", "url"]
+    },
+    "CustomSection": {
+      "title": "CustomSection",
+      "description": "Admin dynamically created sections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subtext": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "orderIndex": { "type": "number" },
+        "layoutType": { "type": "string" }
+      },
+      "required": ["id", "title", "layoutType"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Authorized administrator",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "addedAt": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "PendingSubmission": {
+      "title": "PendingSubmission",
+      "description": "User submission awaiting review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "submittedAt": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "required": ["id", "type", "submittedAt", "data"]
+    },
+    "CommunityMemory": {
+      "title": "CommunityMemory",
+      "description": "Shared public memory from a parent or community member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "caption": { "type": "string" },
+        "contributorName": { "type": "string" },
+        "studentName": { "type": "string" },
+        "className": { "type": "string" },
+        "eventCategory": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "uploadDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "approvedBy": { "type": "string" },
+        "approvedDate": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "featured": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "caption", "contributorName", "mediaType", "mediaUrl", "status", "createdAt", "updatedAt"]
+    },
+    "GraduationStudent": {
+      "title": "GraduationStudent",
+      "description": "A graduating student record with import information and optional completed profile details.",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "graduationYear": { "type": "string" },
+        "graduationCategory": { "type": "string" },
+        "class": { "type": "string" },
+        "status": { "type": "string", "enum": ["Imported", "Pending", "Approved", "Rejected"] },
+        "profileCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "profilePicture": { "type": "string" },
+        "gallery": { "type": "array" },
+        "favoriteMemory": { "type": "string" },
+        "futureAmbition": { "type": "string" },
+        "quote": { "type": "string" },
+        "parentAppreciation": { "type": "string" }
+      },
+      "required": ["studentId", "fullName", "graduationYear", "graduationCategory", "status", "profileCompleted", "createdAt"]
+    },
+    "GraduationSettings": {
+      "title": "GraduationSettings",
+      "description": "Global settings for graduation profiles submission, deadlines, and active categories.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "submissionsOpen": { "type": "boolean" },
+        "deadline": { "type": "string" },
+        "enabledCategories": { "type": "array" },
+        "maxImages": { "type": "number" },
+        "acceptedFormats": { "type": "array" }
+      },
+      "required": ["id", "submissionsOpen", "deadline", "enabledCategories", "maxImages", "acceptedFormats"]
+    },
+    "Like": {
+      "title": "Like",
+      "description": "User like on a media item or student gallery photo",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "mediaId": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "mediaId", "userId", "createdAt"]
+    },
+    "GraduationMemory": {
+      "title": "GraduationMemory",
+      "description": "Public photo or video uploaded for the graduation ceremony memory gallery",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "eventName": { "type": "string" },
+        "graduationYear": { "type": "string" },
+        "uploadedByType": { "type": "string" },
+        "memoryType": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "caption": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "uploaderName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "graduationYear", "uploadedByType", "memoryType", "mediaType", "mediaUrl", "caption", "status", "createdAt", "updatedAt"]
+    },
+    "GraduationMemoryComment": {
+      "title": "GraduationMemoryComment",
+      "description": "Public user comment on a graduation ceremony gallery memory item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "memoryId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorRole": { "type": "string" },
+        "text": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "memoryId", "authorName", "text", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "graduation_memories/{memoryId}": {
+      "schema": "GraduationMemory",
+      "description": "Graduation ceremony gallery media items"
+    },
+    "graduation_memory_comments/{commentId}": {
+      "schema": "GraduationMemoryComment",
+      "description": "Comments left on graduation ceremony gallery items"
+    },
+    "graduation_students/{studentId}": {
+      "schema": "GraduationStudent",
+      "description": "Imported graduands and completed graduation profiles"
+    },
+    "graduation_settings/{settingsId}": {
+      "schema": "GraduationSettings",
+      "description": "Graduation profile system settings"
+    },
+    "students/{studentId}": {
+      "schema": "Student",
+      "description": "Approved student profiles"
+    },
+    "superlatives/{superlativeId}": {
+      "schema": "Superlative",
+      "description": "Approved student superlatives"
+    },
+    "teacher_tributes/{tributeId}": {
+      "schema": "TeacherTribute",
+      "description": "Approved teacher and staff tributes"
+    },
+    "timeline/{eventId}": {
+      "schema": "TimelineEvent",
+      "description": "Approved school history milestone events"
+    },
+    "guestbook/{entryId}": {
+      "schema": "GuestbookEntry",
+      "description": "Approved public guestbook entries"
+    },
+    "videos/{videoId}": {
+      "schema": "VideoMemory",
+      "description": "Approved video memories"
+    },
+    "photos/{photoId}": {
+      "schema": "Photo",
+      "description": "Approved photos in gallery"
+    },
+    "custom_sections/{sectionId}": {
+      "schema": "CustomSection",
+      "description": "Admin dynamically built custom visual sections"
+    },
+    "admins/{email}": {
+      "schema": "Admin",
+      "description": "Approved secondary administrators by normalized email"
+    },
+    "submissions/{submissionId}": {
+      "schema": "PendingSubmission",
+      "description": "Draft guest/parent submissions awaiting review"
+    },
+    "community_memories/{memoryId}": {
+      "schema": "CommunityMemory",
+      "description": "Shared community memories awaiting or passed moderation"
+    },
+    "likes/{likeId}": {
+      "schema": "Like",
+      "description": "Real-time user likes on graduation photos and community memories"
+    }
+  }
+}

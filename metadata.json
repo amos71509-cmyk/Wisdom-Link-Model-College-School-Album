@@ -1,0 +1,6 @@
+{
+  "name": "School Digital Memory Archive",
+  "description": "An elegant, interactive digital archive for preserving and showcasing school history, achievements, and beautiful moments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
