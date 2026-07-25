@@ -20,6 +20,7 @@ import ShareMemory from './components/ShareMemory';
 import GraduationProfileForm from './components/GraduationProfileForm';
 import GraduatesDirectory from './components/GraduatesDirectory';
 import GraduationCeremonyGallery from './components/GraduationCeremonyGallery';
+import { UploadProgressModal } from './components/UploadProgressModal';
 
 import { SchoolPalette, Memory, ParentContribution, CustomSection } from './types';
 import { PALETTES, DEFAULT_PARENT_CONTRIBUTIONS, MEMORIES } from './data/schoolData';
@@ -504,6 +505,9 @@ export default function App() {
           cleanUpMode={cleanUpMode}
           setCleanUpMode={setCleanUpMode}
         />
+
+        {/* Global Live Resumable Upload Progress Modal */}
+        <UploadProgressModal />
       </div>
     </div>
   );

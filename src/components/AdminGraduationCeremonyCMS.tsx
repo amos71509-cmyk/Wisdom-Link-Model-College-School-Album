@@ -338,8 +338,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filterList(pendingMemories).map(item => (
-                <div key={item.id} className="bg-slate-950 border border-amber-500/30 rounded-2xl p-4 space-y-3 flex flex-col justify-between shadow-xl">
+              {filterList(pendingMemories).map((item, idx) => (
+                <div key={item.id ? `${item.id}-${idx}` : `pending-${idx}`} className="bg-slate-950 border border-amber-500/30 rounded-2xl p-4 space-y-3 flex flex-col justify-between shadow-xl">
                   
                   <div className="space-y-2">
                     <div className="relative aspect-video w-full bg-slate-900 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center p-1">
@@ -404,8 +404,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filterList(approvedMemories).map(item => (
-                <div key={item.id} className="bg-slate-950 border border-white/10 rounded-2xl p-4 space-y-3 flex flex-col justify-between shadow-xl">
+              {filterList(approvedMemories).map((item, idx) => (
+                <div key={item.id ? `${item.id}-${idx}` : `approved-${idx}`} className="bg-slate-950 border border-white/10 rounded-2xl p-4 space-y-3 flex flex-col justify-between shadow-xl">
                   
                   <div className="space-y-2">
                     <div className="relative aspect-video w-full bg-slate-900 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center p-1">
@@ -482,8 +482,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filterList(rejectedMemories).map(item => (
-                <div key={item.id} className="bg-slate-950 border border-red-500/20 rounded-2xl p-4 space-y-3 shadow-xl">
+              {filterList(rejectedMemories).map((item, idx) => (
+                <div key={item.id ? `${item.id}-${idx}` : `rejected-${idx}`} className="bg-slate-950 border border-red-500/20 rounded-2xl p-4 space-y-3 shadow-xl">
                   <div className="relative aspect-video w-full bg-slate-900 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center p-1">
                     <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                   </div>
@@ -521,8 +521,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
             </div>
           ) : (
             <div className="space-y-3">
-              {pendingComments.map(comment => (
-                <div key={comment.id} className="p-4 bg-slate-950 border border-indigo-500/30 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              {pendingComments.map((comment, idx) => (
+                <div key={comment.id ? `${comment.id}-${idx}` : `comment-${idx}`} className="p-4 bg-slate-950 border border-indigo-500/30 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 text-xs">
                       <span className="font-bold text-amber-400">{comment.authorName}</span>

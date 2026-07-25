@@ -11,10 +11,15 @@ export function getCloudinaryThumbnail(url: string | undefined | null): string |
   try {
     // Replace the video extension (e.g., .mp4, .mov, .mkv, .avi, .webm) at the end of the path with .jpg
     let thumbUrl = urlStr.replace(/\.[^/.]+$/, '.jpg');
-    // Insert seek-to-1-second transformation parameter if not present
-    if (!thumbUrl.includes('/so_')) {
-      thumbUrl = thumbUrl.replace('/video/upload/', '/video/upload/so_1/');
+
+    if (thumbUrl.includes('/video/upload/')) {
+      const parts = thumbUrl.split('/video/upload/');
+      let rest = parts[1];
+      // Clean up any existing transformation prefixes to avoid duplicate paths
+      rest = rest.replace(/f_auto,q_auto\/?,?/g, '').replace(/so_\d+,?\/?,?/g, '').replace(/^\/+/, '');
+      return `${parts[0]}/video/upload/so_1,f_auto,q_auto,w_800,c_limit/${rest}`;
     }
+
     return thumbUrl;
   } catch (e) {
     console.error("Failed to parse Cloudinary video URL:", e);

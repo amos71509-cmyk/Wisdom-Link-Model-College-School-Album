@@ -42,6 +42,7 @@ import {
   MediaComment
 } from '../types';
 import { compressImage } from '../lib/imageCompressor';
+import { uploadFileToCloudinary } from '../utils/uploadHelper';
 import { 
   approveSubmission, 
   rejectSubmission, 
@@ -1161,52 +1162,17 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
     if (!file) return;
 
     setLogoUploading(true);
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = async () => {
-      try {
-        const rawBase = reader.result as string;
-        const compressed = await compressImage(rawBase, 400, 400, 0.85);
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file: compressed })
-        });
-
-        const contentType = res.headers.get("content-type") || "";
-        let data: any = {};
-        let rawBody = "";
-        try {
-          rawBody = await res.text();
-        } catch (textErr) {
-          console.error("Failed to read raw response body:", textErr);
-        }
-
-        console.log("Upload URL:", "/api/upload");
-        console.log("HTTP Status:", res.status);
-        console.log("Response headers:", [...res.headers.entries()]);
-        console.log("Raw response body sample:", rawBody.substring(0, 1000));
-
-        if (contentType.includes("application/json")) {
-          try {
-            data = JSON.parse(rawBody);
-          } catch (jsonErr) {
-            throw new Error(`Failed to parse JSON response. Status: ${res.status}.`);
-          }
-        } else {
-          throw new Error(`Server returned non-JSON response (Status ${res.status}): ${rawBody.substring(0, 200)}`);
-        }
-
-        if (!res.ok || data.error) throw new Error(data.error || "Upload failed");
-        setLogoUrlInput(data.url);
-        await updateSchoolLogo(data.url);
-        triggerFeedback('success', "Custom branding logo updated!");
-      } catch (err: any) {
-        triggerFeedback('error', err.message || "Failed logo upload");
-      } finally {
-        setLogoUploading(false);
-      }
-    };
+    try {
+      const uploadResult = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026' });
+      const logoUrl = uploadResult.secure_url || uploadResult.url;
+      setLogoUrlInput(logoUrl);
+      await updateSchoolLogo(logoUrl);
+      triggerFeedback('success', "Custom branding logo updated!");
+    } catch (err: any) {
+      triggerFeedback('error', err.message || "Failed logo upload");
+    } finally {
+      setLogoUploading(false);
+    }
   };
 
   // M. Admin users management
@@ -1293,13 +1259,17 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
   const handleRejectCommMemory = async (id: string, reason: string) => {
     setProcessingId(id);
     try {
+      const mem = communityMemories.find(m => m.id === id);
+      if (mem && mem.mediaUrl && mem.mediaUrl.includes("cloudinary.com")) {
+        fetch("/api/delete-cloudinary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: mem.mediaUrl })
+        }).catch(err => console.warn(err));
+      }
       const memoryRef = doc(db, "community_memories", id);
-      await updateDoc(memoryRef, {
-        status: 'Rejected',
-        rejectionReason: reason.trim() || 'Did not meet submission guidelines',
-        updatedAt: new Date().toISOString()
-      });
-      triggerFeedback('success', `Submission rejected.`);
+      await deleteDoc(memoryRef);
+      triggerFeedback('success', `Submission rejected and storage scrubbed.`);
       setRejectingCommId(null);
       setRejectionReasonInput('');
     } catch (e: any) {
@@ -1391,59 +1361,16 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
     if (!file) return;
 
     setUploading(true);
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = async () => {
-      try {
-        const raw = reader.result as string;
-        let payload = raw;
-        let endpoint = "/api/upload";
-
-        if (type === 'image') {
-          payload = await compressImage(raw, 700, 700, 0.75);
-        } else {
-          endpoint = "/api/upload-video";
-        }
-
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file: payload })
-        });
-
-        const contentType = res.headers.get("content-type") || "";
-        let data: any = {};
-        let rawBody = "";
-        try {
-          rawBody = await res.text();
-        } catch (textErr) {
-          console.error("Failed to read raw response body:", textErr);
-        }
-
-        console.log("Upload URL:", endpoint);
-        console.log("HTTP Status:", res.status);
-        console.log("Response headers:", [...res.headers.entries()]);
-        console.log("Raw response body sample:", rawBody.substring(0, 1000));
-
-        if (contentType.includes("application/json")) {
-          try {
-            data = JSON.parse(rawBody);
-          } catch (jsonErr) {
-            throw new Error(`Failed to parse JSON response. Status: ${res.status}.`);
-          }
-        } else {
-          throw new Error(`Server returned non-JSON response (Status ${res.status}): ${rawBody.substring(0, 200)}`);
-        }
-
-        if (!res.ok || data.error) throw new Error(data.error || "File transfer failed");
-        setUrl(data.url);
-        triggerFeedback('success', "Media uploaded successfully!");
-      } catch (err: any) {
-        triggerFeedback('error', err.message || "Failed to upload file");
-      } finally {
-        setUploading(false);
-      }
-    };
+    try {
+      const uploadResult = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026' });
+      const mediaUrl = uploadResult.secure_url || uploadResult.url;
+      setUrl(mediaUrl);
+      triggerFeedback('success', "Media uploaded successfully!");
+    } catch (err: any) {
+      triggerFeedback('error', err.message || "Failed to upload file");
+    } finally {
+      setUploading(false);
+    }
   };
 
   if (!isOpen) return null;

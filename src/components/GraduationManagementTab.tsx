@@ -16,6 +16,7 @@ import {
 } from '../services/firebaseService';
 import { auth } from '../firebase';
 import { compressImage } from '../lib/imageCompressor';
+import { uploadFileToCloudinary, getOptimizedMediaUrl, base64ToFile } from '../utils/uploadHelper';
 import { generateBioSummary } from '../utils/bioSummary';
 
 interface GraduationManagementTabProps {
@@ -59,6 +60,7 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
   const [singleStudentCategory, setSingleStudentCategory] = useState('Senior Secondary Graduation');
   const [singleStudentClass, setSingleStudentClass] = useState('');
   const [singleStudentPhoto, setSingleStudentPhoto] = useState<string | null>(null); // base64 representation
+  const [singleStudentFile, setSingleStudentFile] = useState<File | null>(null);
   const [singleStudentPhotoPreview, setSingleStudentPhotoPreview] = useState<string | null>(null);
   const [singleStudentQuote, setSingleStudentQuote] = useState('');
   const [singleStudentAmbition, setSingleStudentAmbition] = useState('');
@@ -318,6 +320,7 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setSingleStudentFile(file);
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = async () => {
@@ -327,7 +330,7 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
         setSingleStudentPhoto(compressed);
         setSingleStudentPhotoPreview(compressed);
       } catch (err: any) {
-        alert("Failed to process image: " + err.message);
+        alert("Failed to process image preview: " + err.message);
       }
     };
   };
@@ -342,24 +345,19 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
       alert("Class is required.");
       return;
     }
-    if (!singleStudentPhoto) {
+    if (!singleStudentPhoto && !singleStudentFile) {
       alert("Profile Picture is required. Please select a photo.");
       return;
     }
 
     setSavingManual(true);
     try {
-      // 1. Upload compressed photo to Cloudinary
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: singleStudentPhoto })
-      });
-      if (!res.ok) {
-        throw new Error("Failed to upload profile picture to cloud storage.");
+      // 1. Upload photo to Cloudinary
+      let imageUrl = singleStudentPhoto || '';
+      if (singleStudentFile) {
+        const uploadResult = await uploadFileToCloudinary(singleStudentFile, { folder: 'scholars_class_2026' });
+        imageUrl = uploadResult.secure_url || uploadResult.url;
       }
-      const data = await res.json();
-      const imageUrl = data.url;
 
       // 2. Create the student record in Firestore
       const studentId = `grad-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -467,8 +465,45 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
   // Approve a graduate's profile
   const handleApproveProfile = async (student: GraduationStudent) => {
     try {
+      let image = student.image || '';
+      let profilePhoto = student.profilePhoto || image;
+      let profilePicture = student.profilePicture || image;
+
+      if (image.startsWith('data:image/')) {
+        console.log("[ADMIN APPROVAL] Uploading staged student avatar to Cloudinary...");
+        const file = base64ToFile(image, `approved_student_${student.studentId}.jpg`);
+        const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+        image = res.secure_url || res.url;
+        profilePhoto = image;
+        profilePicture = image;
+      }
+
+      const personalAlbum = Array.isArray(student.personalAlbum) ? [...student.personalAlbum] : [];
+      for (let i = 0; i < personalAlbum.length; i++) {
+        if (personalAlbum[i] && personalAlbum[i].startsWith('data:image/')) {
+          const file = base64ToFile(personalAlbum[i], `approved_student_album_${student.studentId}_${i}.jpg`);
+          const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+          personalAlbum[i] = res.secure_url || res.url;
+        }
+      }
+
+      const gallery = Array.isArray(student.gallery) ? [...student.gallery] : [];
+      for (let i = 0; i < gallery.length; i++) {
+        if (gallery[i] && gallery[i].startsWith('data:image/')) {
+          const file = base64ToFile(gallery[i], `approved_student_gallery_${student.studentId}_${i}.jpg`);
+          const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+          gallery[i] = res.secure_url || res.url;
+        }
+      }
+
       const updated: GraduationStudent = {
         ...student,
+        image,
+        profilePhoto,
+        profilePicture,
+        personalAlbum,
+        gallery,
+        isStaged: false,
         status: 'Approved',
         profileApproved: true,
         profileCompleted: true,
@@ -489,7 +524,7 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
     try {
       const adminEmail = auth.currentUser?.email || 'Admin';
       await rejectGraduationStudent(student.studentId, reason, adminEmail);
-      alert(`${student.fullName}'s yearbook profile has been returned to Staging for corrections. Reason sent: "${reason}"`);
+      alert(`${student.fullName}'s profile has been rejected and automatically deleted from storage and database per cleanup rules.`);
     } catch (err: any) {
       alert(`Rejection failed: ${err.message || err}`);
     }
@@ -499,40 +534,19 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
   const handleDirectProfilePhotoUpload = async (student: GraduationStudent, file: File) => {
     setUploadingPhotoStudentId(student.studentId);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      await new Promise<void>((resolve, reject) => {
-        reader.onload = async () => {
-          try {
-            const rawBase = reader.result as string;
-            // Compress
-            const compressed = await compressImage(rawBase, 400, 400, 0.85);
-            // Upload to Cloudinary
-            const res = await fetch('/api/upload', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image: compressed })
-            });
-            if (!res.ok) throw new Error("Failed to upload to Cloudinary");
-            const data = await res.json();
-            
-            // Save to Firestore
-            const updated: GraduationStudent = {
-              ...student,
-              profilePhoto: data.url,
-              profilePicture: data.url,
-              updatedAt: new Date().toISOString()
-            };
-            await saveGraduationStudent(updated);
-            
-            alert(`Profile photo for ${student.fullName} has been updated successfully!`);
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        };
-        reader.onerror = (err) => reject(err);
-      });
+      const uploadResult = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026' });
+      const photoUrl = uploadResult.secure_url || uploadResult.url;
+
+      // Save to Firestore
+      const updated: GraduationStudent = {
+        ...student,
+        profilePhoto: photoUrl,
+        profilePicture: photoUrl,
+        updatedAt: new Date().toISOString()
+      };
+      await saveGraduationStudent(updated);
+
+      alert(`Profile photo for ${student.fullName} has been updated successfully!`);
     } catch (err: any) {
       alert("Photo update failed: " + (err.message || err));
     } finally {
@@ -558,46 +572,25 @@ export default function GraduationManagementTab({ activePalette }: GraduationMan
   const handleAddAlbumPhoto = async (student: GraduationStudent, file: File) => {
     setUploadingAlbumPhoto(true);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      await new Promise<void>((resolve, reject) => {
-        reader.onload = async () => {
-          try {
-            const rawBase = reader.result as string;
-            // Compress
-            const compressed = await compressImage(rawBase, 800, 800, 0.85); // slightly larger for album photos
-            // Upload to Cloudinary
-            const res = await fetch('/api/upload', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image: compressed })
-            });
-            if (!res.ok) throw new Error("Failed to upload to Cloudinary");
-            const data = await res.json();
-            
-            // Append to personalAlbum and gallery lists
-            const currentAlbum = student.personalAlbum || student.gallery || [];
-            const newAlbum = [...currentAlbum, data.url];
-            
-            const updated: GraduationStudent = {
-              ...student,
-              personalAlbum: newAlbum,
-              gallery: newAlbum,
-              updatedAt: new Date().toISOString()
-            };
-            await saveGraduationStudent(updated);
-            
-            // Keep albumStudent state up to date so the modal re-renders
-            setAlbumStudent(updated);
-            
-            alert("New photo added to the Personal Graduation Album!");
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        };
-        reader.onerror = (err) => reject(err);
-      });
+      const uploadResult = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026' });
+      const photoUrl = uploadResult.secure_url || uploadResult.url;
+
+      // Append to personalAlbum and gallery lists
+      const currentAlbum = student.personalAlbum || student.gallery || [];
+      const newAlbum = [...currentAlbum, photoUrl];
+
+      const updated: GraduationStudent = {
+        ...student,
+        personalAlbum: newAlbum,
+        gallery: newAlbum,
+        updatedAt: new Date().toISOString()
+      };
+      await saveGraduationStudent(updated);
+
+      // Keep albumStudent state up to date so the modal re-renders
+      setAlbumStudent(updated);
+
+      alert("New photo added to the Personal Graduation Album!");
     } catch (err: any) {
       alert("Failed to add photo to album: " + (err.message || err));
     } finally {

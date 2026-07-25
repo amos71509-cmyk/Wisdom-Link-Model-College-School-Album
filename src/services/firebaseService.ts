@@ -14,6 +14,7 @@ import {
   onSnapshot 
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { uploadFileToCloudinary, base64ToFile } from "../utils/uploadHelper";
 import { 
   Student, 
   Superlative, 
@@ -100,6 +101,28 @@ export function sanitizeData(data: any): any {
 // ==========================================================
 
 /**
+ * Automatically scrubs Cloudinary assets via backend when items are rejected or deleted.
+ */
+export async function scrubCloudinaryMedia(urlOrUrls?: string | (string | undefined | null)[]): Promise<void> {
+  if (!urlOrUrls) return;
+  const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
+  for (const u of urls) {
+    if (u && typeof u === 'string' && u.includes("cloudinary.com")) {
+      try {
+        console.log("[CLOUDINARY CLEANUP] Scrubbing media asset from cloud:", u);
+        await fetch("/api/delete-cloudinary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: u })
+        });
+      } catch (err) {
+        console.warn("[CLOUDINARY CLEANUP WARNING] Failed to scrub media:", u, err);
+      }
+    }
+  }
+}
+
+/**
  * 1. submitToModeration(type, data)
  * Sanitizes input fields, appends a unique ID, and writes data to the 'submissions' collection.
  */
@@ -182,6 +205,23 @@ export async function approveSubmission(item: PendingSubmission): Promise<void> 
 
   const adminId = auth.currentUser?.uid || auth.currentUser?.email || 'Admin';
   const timestamp = new Date().toISOString();
+
+  // If the submission has a staged Base64 Data URL, upload it to Cloudinary now that Admin has approved it!
+  const imgFields = ['imageUrl', 'photoUrl', 'url', 'image', 'mediaUrl', 'thumbnailUrl'];
+  for (const field of imgFields) {
+    if (item.data && typeof item.data[field] === 'string' && item.data[field].startsWith('data:image/')) {
+      try {
+        console.log(`[APPROVAL UPLOAD] Uploading staged Base64 image field '${field}' to Cloudinary...`);
+        const file = base64ToFile(item.data[field], `approved_${item.id}_${field}.jpg`);
+        const uploadRes = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+        item.data[field] = uploadRes.secure_url || uploadRes.url;
+        item.data.isStaged = false;
+        console.log(`[APPROVAL UPLOAD SUCCESS] Field '${field}' uploaded to Cloudinary: ${item.data[field]}`);
+      } catch (uploadErr) {
+        console.error(`[APPROVAL UPLOAD ERROR] Failed to upload staged image for field '${field}':`, uploadErr);
+      }
+    }
+  }
 
   // 1. Update the existing submission document in the submissions collection
   batch.update(submissionRef, {
@@ -286,34 +326,26 @@ export async function approveSubmission(item: PendingSubmission): Promise<void> 
 
 /**
  * 4. rejectSubmission(item)
- * Removes from submissions collection and scrubs orphaned media attachments.
+ * Removes from submissions collection and scrubs orphaned media attachments from Cloudinary immediately.
  */
 export async function rejectSubmission(item: PendingSubmission, reason: string = ""): Promise<void> {
   const submissionRef = doc(db, "submissions", item.id);
   
-  // Try to find any uploaded asset hosted on Cloudinary in the submission data payload
-  const mediaUrl = item.data?.imageUrl || item.data?.photoUrl || item.data?.url || item.data?.videoUrl || item.data?.image;
+  const mediaUrls = [
+    item.data?.imageUrl,
+    item.data?.photoUrl,
+    item.data?.url,
+    item.data?.videoUrl,
+    item.data?.image,
+    item.data?.mediaUrl,
+    item.data?.thumbnailUrl
+  ];
   
-  if (mediaUrl && mediaUrl.includes("cloudinary.com")) {
-    try {
-      await fetch("/api/delete-cloudinary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: mediaUrl })
-      });
-      console.log("Scrubbed rejected submission media from Cloudinary:", mediaUrl);
-    } catch (err) {
-      console.error("Error scrubbing rejected media from Cloudinary:", err);
-    }
-  }
+  await scrubCloudinaryMedia(mediaUrls);
   
-  // Consistent Rejection Logic: Update status and store metadata reason in Firestore instead of deleting
-  await updateDoc(submissionRef, {
-    status: 'Rejected',
-    rejectionReason: reason,
-    rejectedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  });
+  // Per explicit requirement: automatically delete rejected submissions from database immediately to save space!
+  await deleteDoc(submissionRef);
+  console.log(`[FIRESTORE DELETE] Rejected and scrubbed submission ID: ${item.id}`);
 }
 
 // ==========================================================
@@ -360,7 +392,7 @@ export function subscribeCustomSections(callback: (sections: CustomSection[]) =>
   return onSnapshot(colRef, (snapshot) => {
     const list: CustomSection[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as CustomSection);
+      list.push({ id: doc.id, ...doc.data() } as CustomSection);
     });
     // Sort by orderIndex
     list.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -662,7 +694,7 @@ export function subscribeStudents(callback: (students: Student[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: Student[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as Student);
+      list.push({ id: doc.id, ...doc.data() } as Student);
     });
     console.log(`[FIRESTORE READ] Collection: students, Count: ${list.length}, Query Filters: status == "Approved"`);
     callback(list);
@@ -675,7 +707,7 @@ export function subscribeSuperlatives(callback: (superlatives: Superlative[]) =>
   return onSnapshot(q, (snapshot) => {
     const list: Superlative[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as Superlative);
+      list.push({ id: doc.id, ...doc.data() } as Superlative);
     });
     console.log(`[FIRESTORE READ] Collection: superlatives, Count: ${list.length}, Query Filters: status == "Approved"`);
     callback(list);
@@ -688,7 +720,7 @@ export function subscribeTeacherTributes(callback: (tributes: TeacherTribute[]) 
   return onSnapshot(q, (snapshot) => {
     const list: TeacherTribute[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as TeacherTribute);
+      list.push({ id: doc.id, ...doc.data() } as TeacherTribute);
     });
     console.log(`[FIRESTORE READ] Collection: teacher_tributes, Count: ${list.length}, Query Filters: status == "Approved"`);
     callback(list);
@@ -701,7 +733,7 @@ export function subscribeTimeline(callback: (events: TimelineEvent[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: TimelineEvent[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as TimelineEvent);
+      list.push({ id: doc.id, ...doc.data() } as TimelineEvent);
     });
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     console.log(`[FIRESTORE READ] Collection: timeline, Count: ${list.length}, Query Filters: status == "Approved"`);
@@ -715,7 +747,7 @@ export function subscribeGuestbook(callback: (entries: GuestbookEntry[]) => void
   return onSnapshot(q, (snapshot) => {
     const list: GuestbookEntry[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GuestbookEntry);
+      list.push({ id: doc.id, ...doc.data() } as GuestbookEntry);
     });
     list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     console.log(`[FIRESTORE READ] Collection: guestbook, Count: ${list.length}, Query Filters: status == "Approved"`);
@@ -729,7 +761,7 @@ export function subscribePhotos(callback: (photos: Photo[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: Photo[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as Photo);
+      list.push({ id: doc.id, ...doc.data() } as Photo);
     });
     console.log(`[FIRESTORE READ] Collection: photos, Count: ${list.length}, Query Filters: status == "Approved"`);
     callback(list);
@@ -742,7 +774,7 @@ export function subscribeVideos(callback: (videos: VideoMemory[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: VideoMemory[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as VideoMemory);
+      list.push({ id: doc.id, ...doc.data() } as VideoMemory);
     });
     console.log(`[FIRESTORE READ] Collection: videos, Count: ${list.length}, Query Filters: status == "Approved"`);
     callback(list);
@@ -774,7 +806,7 @@ export function subscribeCommunityMemories(callback: (memories: CommunityMemory[
     snapshot.forEach((doc) => {
       const data = doc.data() as CommunityMemory;
       if (data) {
-        list.push(data);
+        list.push({ id: doc.id, ...data });
       }
     });
     // Sort by upload date or creation date descending
@@ -809,7 +841,7 @@ export function subscribeApprovedComments(callback: (comments: MediaComment[]) =
     snapshot.forEach((doc) => {
       const data = doc.data() as MediaComment;
       if (data) {
-        list.push(data);
+        list.push({ id: doc.id, ...data });
       }
     });
     // Sort chronological ascending (oldest first, fits comment sections)
@@ -825,7 +857,7 @@ export function subscribePendingComments(callback: (comments: MediaComment[]) =>
     snapshot.forEach((doc) => {
       const data = doc.data() as MediaComment;
       if (data) {
-        list.push(data);
+        list.push({ id: doc.id, ...data });
       }
     });
     // Sort chronological descending (newest first for moderation queue)
@@ -850,12 +882,10 @@ export async function approveComment(id: string, approvedBy: string): Promise<vo
 export async function rejectComment(id: string, reason?: string): Promise<void> {
   try {
     const docRef = doc(db, "comments", id);
-    await updateDoc(docRef, {
-      status: "Rejected",
-      rejectionReason: reason || ""
-    });
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Rejected and deleted comment ID: ${id}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `comments/${id}`);
+    handleFirestoreError(err, OperationType.DELETE, `comments/${id}`);
   }
 }
 
@@ -935,18 +965,21 @@ export async function saveGraduationStudent(student: GraduationStudent): Promise
 export async function rejectGraduationStudent(studentId: string, reason: string, rejectedBy: string): Promise<void> {
   try {
     const docRef = doc(db, "graduation_students", studentId);
-    await updateDoc(docRef, {
-      status: "Rejected",
-      profileApproved: false,
-      profileCompleted: false,
-      rejectionReason: reason || "",
-      rejectedAt: new Date().toISOString(),
-      rejectedBy: rejectedBy || "Admin",
-      updatedAt: new Date().toISOString()
-    });
-    console.log(`[FIRESTORE WRITE] Collection: graduation_students, DocID: ${studentId}, Action: rejectGraduationStudent`);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      await scrubCloudinaryMedia([
+        data.image,
+        data.profilePicture,
+        data.profilePhoto,
+        ...(Array.isArray(data.personalAlbum) ? data.personalAlbum : []),
+        ...(Array.isArray(data.gallery) ? data.gallery : [])
+      ]);
+    }
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Rejected and deleted graduation student ID: ${studentId}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `graduation_students/${studentId}`);
+    handleFirestoreError(err, OperationType.DELETE, `graduation_students/${studentId}`);
     throw err;
   }
 }
@@ -954,6 +987,17 @@ export async function rejectGraduationStudent(studentId: string, reason: string,
 export async function deleteGraduationStudent(studentId: string): Promise<void> {
   try {
     const docRef = doc(db, "graduation_students", studentId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      await scrubCloudinaryMedia([
+        data.image,
+        data.profilePicture,
+        data.profilePhoto,
+        ...(Array.isArray(data.personalAlbum) ? data.personalAlbum : []),
+        ...(Array.isArray(data.gallery) ? data.gallery : [])
+      ]);
+    }
     await deleteDoc(docRef);
     console.log(`[FIRESTORE DELETE] Collection: graduation_students, DocID: ${studentId}, Action: deleteGraduationStudent`);
   } catch (err) {
@@ -967,7 +1011,7 @@ export function subscribeAllGraduationStudents(callback: (students: GraduationSt
   return onSnapshot(colRef, (snapshot) => {
     const list: GraduationStudent[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationStudent);
+      list.push({ id: doc.id, ...doc.data() } as unknown as GraduationStudent);
     });
     console.log(`[FIRESTORE READ ALL] Collection: graduation_students, Count: ${list.length}`);
     callback(list);
@@ -980,7 +1024,7 @@ export function subscribeApprovedGraduationStudents(callback: (students: Graduat
   return onSnapshot(q, (snapshot) => {
     const list: GraduationStudent[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationStudent);
+      list.push({ id: doc.id, ...doc.data() } as unknown as GraduationStudent);
     });
     console.log(`[FIRESTORE READ APPROVED] Collection: graduation_students, Count: ${list.length}`);
     callback(list);
@@ -1061,7 +1105,7 @@ export function subscribeApprovedGraduationMemories(callback: (memories: Graduat
   return onSnapshot(q, (snapshot) => {
     const list: GraduationMemory[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationMemory);
+      list.push({ id: doc.id, ...doc.data() } as GraduationMemory);
     });
     // Sort descending by createdAt
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -1075,7 +1119,7 @@ export function subscribeAllGraduationMemories(callback: (memories: GraduationMe
   return onSnapshot(colRef, (snapshot) => {
     const list: GraduationMemory[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationMemory);
+      list.push({ id: doc.id, ...doc.data() } as GraduationMemory);
     });
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     console.log(`[FIRESTORE READ ALL] Collection: graduation_memories, Count: ${list.length}`);
@@ -1086,12 +1130,42 @@ export function subscribeAllGraduationMemories(callback: (memories: GraduationMe
 export async function approveGraduationMemory(id: string, adminName: string): Promise<void> {
   try {
     const docRef = doc(db, "graduation_memories", id);
-    await updateDoc(docRef, {
+    const snap = await getDoc(docRef);
+    let mediaUrl = "";
+    let thumbnailUrl = "";
+    let updated = false;
+
+    if (snap.exists()) {
+      const mem = snap.data();
+      mediaUrl = mem.mediaUrl || "";
+      thumbnailUrl = mem.thumbnailUrl || "";
+
+      if (mediaUrl && typeof mediaUrl === 'string' && mediaUrl.startsWith('data:image/')) {
+        const file = base64ToFile(mediaUrl, `approved_grad_mem_${id}.jpg`);
+        const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+        mediaUrl = res.secure_url || res.url;
+        updated = true;
+      }
+      if (thumbnailUrl && typeof thumbnailUrl === 'string' && thumbnailUrl.startsWith('data:image/')) {
+        const file = base64ToFile(thumbnailUrl, `approved_grad_thumb_${id}.jpg`);
+        const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
+        thumbnailUrl = res.secure_url || res.url;
+        updated = true;
+      }
+    }
+
+    const updatePayload: any = {
       status: 'Approved',
       approvedBy: adminName || 'Admin',
       approvedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
-    });
+    };
+    if (updated) {
+      updatePayload.mediaUrl = mediaUrl;
+      updatePayload.thumbnailUrl = thumbnailUrl;
+      updatePayload.isStaged = false;
+    }
+    await updateDoc(docRef, updatePayload);
     console.log(`[FIRESTORE WRITE] Collection: graduation_memories, DocID: ${id}, Approved by ${adminName}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `graduation_memories/${id}`);
@@ -1102,16 +1176,15 @@ export async function approveGraduationMemory(id: string, adminName: string): Pr
 export async function rejectGraduationMemory(id: string, adminName: string, reason?: string): Promise<void> {
   try {
     const docRef = doc(db, "graduation_memories", id);
-    await updateDoc(docRef, {
-      status: 'Rejected',
-      rejectedBy: adminName || 'Admin',
-      rejectedAt: new Date().toISOString(),
-      rejectionReason: reason || '',
-      updatedAt: new Date().toISOString()
-    });
-    console.log(`[FIRESTORE WRITE] Collection: graduation_memories, DocID: ${id}, Rejected by ${adminName}`);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
+    }
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Rejected and deleted graduation memory DocID: ${id}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `graduation_memories/${id}`);
+    handleFirestoreError(err, OperationType.DELETE, `graduation_memories/${id}`);
     throw err;
   }
 }
@@ -1119,6 +1192,11 @@ export async function rejectGraduationMemory(id: string, adminName: string, reas
 export async function deleteGraduationMemory(id: string): Promise<void> {
   try {
     const docRef = doc(db, "graduation_memories", id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
+    }
     await deleteDoc(docRef);
     console.log(`[FIRESTORE DELETE] Collection: graduation_memories, DocID: ${id}`);
   } catch (err) {
@@ -1168,7 +1246,7 @@ export function subscribeGraduationMemoryComments(memoryId: string, callback: (c
   return onSnapshot(q, (snapshot) => {
     const list: GraduationMemoryComment[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationMemoryComment);
+      list.push({ id: doc.id, ...doc.data() } as GraduationMemoryComment);
     });
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     callback(list);
@@ -1180,7 +1258,7 @@ export function subscribeAllGraduationComments(callback: (comments: GraduationMe
   return onSnapshot(colRef, (snapshot) => {
     const list: GraduationMemoryComment[] = [];
     snapshot.forEach((doc) => {
-      list.push(doc.data() as GraduationMemoryComment);
+      list.push({ id: doc.id, ...doc.data() } as GraduationMemoryComment);
     });
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);

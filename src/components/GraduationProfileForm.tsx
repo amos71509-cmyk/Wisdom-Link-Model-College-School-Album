@@ -11,6 +11,7 @@ import {
   saveGraduationStudent 
 } from '../services/firebaseService';
 import { compressImage } from '../lib/imageCompressor';
+import { stageOrUploadMedia } from '../utils/uploadHelper';
 import { generateBioSummary } from '../utils/bioSummary';
 
 interface GraduationProfileFormProps {
@@ -128,28 +129,14 @@ export default function GraduationProfileForm({ onBackToHome }: GraduationProfil
     if (!file) return;
 
     setIsUploadingPic(true);
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = async () => {
-      try {
-        const raw = reader.result as string;
-        const compressed = await compressImage(raw, 500, 500, 0.85);
-
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file: compressed })
-        });
-
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || 'Upload failed');
-        setProfilePicture(data.url);
-      } catch (err: any) {
-        alert(`Failed to upload avatar: ${err.message}`);
-      } finally {
-        setIsUploadingPic(false);
-      }
-    };
+    try {
+      const uploadResult = await stageOrUploadMedia(file, { folder: 'scholars_class_2026' });
+      setProfilePicture(uploadResult.secure_url || uploadResult.url);
+    } catch (err: any) {
+      alert(`Failed to upload avatar: ${err.message}`);
+    } finally {
+      setIsUploadingPic(false);
+    }
   };
 
   // Gallery multi-image upload change
@@ -169,23 +156,10 @@ export default function GraduationProfileForm({ onBackToHome }: GraduationProfil
       const uploadedUrls: string[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result as string);
-        });
-
-        const compressed = await compressImage(base64, 800, 800, 0.75);
-
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file: compressed })
-        });
-
-        const data = await res.json();
-        if (res.ok && data.url) {
-          uploadedUrls.push(data.url);
+        const uploadResult = await stageOrUploadMedia(file, { folder: 'scholars_class_2026' });
+        const finalUrl = uploadResult.secure_url || uploadResult.url;
+        if (finalUrl) {
+          uploadedUrls.push(finalUrl);
         }
       }
 
@@ -231,6 +205,7 @@ export default function GraduationProfileForm({ onBackToHome }: GraduationProfil
         profilePhoto: profilePicture,
         gallery: galleryImages,
         personalAlbum: galleryImages,
+        isStaged: true,
         status: 'Pending', // Awaiting admin approval
         profileCompleted: false, // Remains false until admin approves
         profileApproved: false,

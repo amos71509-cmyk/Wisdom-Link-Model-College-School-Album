@@ -182,6 +182,7 @@ export interface CommunityMemory {
   approvedDate?: string;
   rejectionReason?: string;
   featured?: boolean;
+  isStaged?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -249,6 +250,7 @@ export interface GraduationMemory {
   rejectedBy?: string;
   rejectedAt?: string;
   rejectionReason?: string;
+  isStaged?: boolean;
   likesCount?: number;
   commentsCount?: number;
   uploaderName?: string;

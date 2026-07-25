@@ -359,9 +359,11 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
 
       const timestamp = Math.round(new Date().getTime() / 1000).toString();
       const folder = reqFolder || "scholars_class_2026";
+      const transformation = "f_auto,q_auto";
 
       // Alphabetical query parameters signature logic for Cloudinary signed upload
-      const stringToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+      // Alphabetical order: folder, timestamp, transformation
+      const stringToSign = `folder=${folder}&timestamp=${timestamp}&transformation=${transformation}${apiSecret}`;
       const signature = crypto
         .createHash("sha1")
         .update(stringToSign)
@@ -394,11 +396,12 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
 
       formData.append("timestamp", timestamp);
       formData.append("folder", folder);
+      formData.append("transformation", transformation);
       formData.append("api_key", apiKey);
       formData.append("signature", signature);
 
-      console.log(`[CLOUDINARY PROXY] Sending ${targetResourceType} upload to ${uploadUrl}...`);
-      console.log(`[CLOUDINARY PROXY] FormData keys: file, timestamp, folder, api_key, signature`);
+      console.log(`[CLOUDINARY PROXY] Sending ${targetResourceType} upload with auto-optimization (f_auto,q_auto) to ${uploadUrl}...`);
+      console.log(`[CLOUDINARY PROXY] FormData keys: file, timestamp, folder, transformation, api_key, signature`);
 
       const response = await fetch(uploadUrl, {
         method: "POST",
@@ -433,13 +436,20 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
         return;
       }
 
-      const finalUrl = data.secure_url || data.url;
+      let finalUrl = data.secure_url || data.url;
       if (!finalUrl || !finalUrl.startsWith("http")) {
         res.status(500).json({
           error: "Cloudinary upload succeeded but did not return a valid secure URL.",
           success: false
         });
         return;
+      }
+
+      // Ensure dynamic optimization flags (f_auto,q_auto) are explicitly included in the secure URL
+      if (finalUrl.includes("/image/upload/") && !finalUrl.includes("/f_auto,q_auto")) {
+        finalUrl = finalUrl.replace("/image/upload/", "/image/upload/f_auto,q_auto/");
+      } else if (finalUrl.includes("/video/upload/") && !finalUrl.includes("/f_auto,q_auto")) {
+        finalUrl = finalUrl.replace("/video/upload/", "/video/upload/f_auto,q_auto/");
       }
 
       res.status(200).json({

@@ -8,7 +8,7 @@ import { compressImage } from '../lib/imageCompressor';
 import { db } from '../firebase';
 import { collection, doc, setDoc } from 'firebase/firestore';
 import { getCloudinaryThumbnail } from '../utils/videoUtils';
-import { uploadFileToCloudinary } from '../utils/uploadHelper';
+import { stageOrUploadMedia, validateUploadFile } from '../utils/uploadHelper';
 
 interface ShareMemoryProps {
   onBackToHome: () => void;
@@ -80,20 +80,14 @@ export default function ShareMemory({ onBackToHome }: ShareMemoryProps) {
   };
 
   const handleFile = (selectedFile: File) => {
-    const isImage = selectedFile.type.startsWith('image/');
-    const isVideo = selectedFile.type.startsWith('video/');
-
-    if (!isImage && !isVideo) {
-      setUploadError("Unsupported format. Please upload a high-resolution image or a common video file.");
+    const validation = validateUploadFile(selectedFile);
+    if (!validation.valid) {
+      setUploadError(validation.error || "Invalid file format or size.");
       return;
     }
 
-    // Limit files to 15MB
-    const maxSize = 15 * 1024 * 1024; // 15MB
-    if (selectedFile.size > maxSize) {
-      setUploadError("File size exceeds 15MB. Please upload a smaller file.");
-      return;
-    }
+    const isImage = selectedFile.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(selectedFile.name);
+    const isVideo = selectedFile.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(selectedFile.name);
 
     setUploadError('');
     setFile(selectedFile);
@@ -131,8 +125,8 @@ export default function ShareMemory({ onBackToHome }: ShareMemoryProps) {
     setUploadProgress(10);
 
     try {
-      console.log(`[COMMUNITY UPLOAD] Starting upload for ${file.name}...`);
-      const uploadResult = await uploadFileToCloudinary(file, {
+      console.log(`[COMMUNITY UPLOAD] Staging upload for ${file.name}...`);
+      const uploadResult = await stageOrUploadMedia(file, {
         folder: 'scholars_class_2026',
         onProgress: (pct) => {
           setUploadProgress(Math.min(90, 10 + Math.round(pct * 0.8)));
@@ -140,8 +134,8 @@ export default function ShareMemory({ onBackToHome }: ShareMemoryProps) {
       });
 
       const uploadedUrl = uploadResult.secure_url || uploadResult.url;
-      if (!uploadedUrl || !uploadedUrl.startsWith('http')) {
-        throw new Error("Upload did not return a valid HTTPS URL.");
+      if (!uploadedUrl) {
+        throw new Error("Upload did not return a valid media URL.");
       }
 
       setUploadProgress(92);
@@ -161,6 +155,7 @@ export default function ShareMemory({ onBackToHome }: ShareMemoryProps) {
         mediaType,
         mediaUrl: uploadedUrl,
         thumbnailUrl: mediaType === 'video' ? (getCloudinaryThumbnail(uploadedUrl) || uploadedUrl) : uploadedUrl,
+        isStaged: uploadResult.isStaged,
         uploadDate: eventDate || new Date().toISOString().split('T')[0],
         status: 'Pending',
         createdAt: new Date().toISOString(),

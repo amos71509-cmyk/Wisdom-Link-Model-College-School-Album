@@ -4,7 +4,7 @@ import { ParentContribution, Memory } from '../types';
 import { DEFAULT_PARENT_CONTRIBUTIONS } from '../data/schoolData';
 import { compressImage } from '../lib/imageCompressor';
 import { submitToModeration } from '../services/firebaseService';
-import { uploadFileToCloudinary } from '../utils/uploadHelper';
+import { stageOrUploadMedia, validateUploadFile } from '../utils/uploadHelper';
 
 interface ParentContributionsProps {
   onAddMemory: (newMemory: Memory) => void;
@@ -56,11 +56,17 @@ export default function ParentContributions({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const isImg = file.type.startsWith('image/');
-    const isVid = file.type.startsWith('video/');
+    const isImg = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name);
+    const isVid = file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name);
 
     if (!isImg && !isVid) {
       setUploadError("Unsupported media format. Please upload an image or video.");
+      return;
+    }
+
+    const validation = validateUploadFile(file);
+    if (!validation.valid) {
+      setUploadError(validation.error || "Invalid file format or size.");
       return;
     }
 
@@ -68,12 +74,12 @@ export default function ParentContributions({
     setUploadError("");
 
     try {
-      console.log(`[PARENT CONTRIBUTION] Starting upload for ${file.name}...`);
-      const uploadResult = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026' });
+      console.log(`[PARENT CONTRIBUTION] Staging upload for ${file.name}...`);
+      const uploadResult = await stageOrUploadMedia(file, { folder: 'scholars_class_2026' });
 
       const newUrl = uploadResult.secure_url || uploadResult.url;
-      if (!newUrl || !newUrl.startsWith('http')) {
-        throw new Error("Cloudinary upload did not return a valid HTTPS URL.");
+      if (!newUrl) {
+        throw new Error("Upload did not return a valid media URL.");
       }
 
       if (customUploadedUrl) {

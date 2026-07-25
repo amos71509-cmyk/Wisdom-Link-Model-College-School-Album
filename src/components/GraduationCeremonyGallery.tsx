@@ -17,7 +17,7 @@ import {
 import { compressImage } from '../lib/imageCompressor';
 import { getCloudinaryThumbnail } from '../utils/videoUtils';
 import { getOptimizedImageUrl } from '../utils/imageUtils';
-import { uploadFileToCloudinary } from '../utils/uploadHelper';
+import { stageOrUploadMedia, validateUploadFile } from '../utils/uploadHelper';
 
 const UPLOADER_TYPES = [
   'Parent',
@@ -316,28 +316,34 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     if (e.target.files && e.target.files.length > 0) {
       const filesArray: File[] = Array.from(e.target.files);
       const newItems: UploadFileItem[] = [];
+      const errors: string[] = [];
 
       filesArray.forEach((f) => {
-        const isImg = f.type.startsWith('image/');
-        const isVid = f.type.startsWith('video/');
-        if (isImg || isVid) {
-          newItems.push({
-            id: Math.random().toString(36).substring(2, 9),
-            file: f,
-            previewUrl: URL.createObjectURL(f),
-            mediaType: isImg ? 'image' : 'video',
-            sizeText: (f.size / (1024 * 1024)).toFixed(2) + ' MB'
-          });
+        const validation = validateUploadFile(f);
+        if (!validation.valid) {
+          if (validation.error) errors.push(validation.error);
+          return;
         }
+
+        const isImg = f.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(f.name);
+        newItems.push({
+          id: Math.random().toString(36).substring(2, 9),
+          file: f,
+          previewUrl: URL.createObjectURL(f),
+          mediaType: isImg ? 'image' : 'video',
+          sizeText: (f.size / (1024 * 1024)).toFixed(2) + ' MB'
+        });
       });
 
-      if (newItems.length === 0) {
-        setUploadError('Please select valid JPG, PNG, WEBP, MP4, MOV, or WEBM files.');
-        return;
+      if (errors.length > 0) {
+        setUploadError(errors.join(' '));
+      } else {
+        setUploadError('');
       }
 
-      setUploadError('');
-      setSelectedFiles((prev) => [...prev, ...newItems]);
+      if (newItems.length > 0) {
+        setSelectedFiles((prev) => [...prev, ...newItems]);
+      }
     }
   };
 
@@ -370,8 +376,8 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
         setUploadProgressText(`Uploading ${i + 1} of ${total}: ${item.file.name}`);
         setUploadProgressPercent(Math.round(((i) / total) * 100));
 
-        console.log(`[UPLOAD FLOW] Uploading ${item.file.name} directly via multipart upload...`);
-        const result = await uploadFileToCloudinary(item.file, {
+        console.log(`[UPLOAD FLOW] Staging upload for ${item.file.name}...`);
+        const result = await stageOrUploadMedia(item.file, {
           folder: 'scholars_class_2026',
           onProgress: (pct) => {
             const overallPct = Math.round(((i + pct / 100) / total) * 100);
@@ -380,18 +386,18 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
         });
 
         const finalMediaUrl = result.secure_url || result.url;
-        if (!finalMediaUrl || !finalMediaUrl.startsWith('http')) {
-          throw new Error("Cloudinary upload failed to return a valid HTTPS media URL.");
+        if (!finalMediaUrl) {
+          throw new Error("Upload failed to return a valid media URL.");
         }
 
-        console.log(`[UPLOAD FLOW SUCCESS] Cloudinary media URL verified: ${finalMediaUrl}`);
+        console.log(`[UPLOAD FLOW SUCCESS] Staging URL ready: ${finalMediaUrl.substring(0, 50)}...`);
 
         let thumbnailUrl = '';
         if (item.mediaType === 'video') {
           thumbnailUrl = getCloudinaryThumbnail(finalMediaUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800';
         }
 
-        // Save ONLY the Cloudinary URL to Firestore
+        // Save ONLY the staged or media URL to Firestore
         await submitGraduationCeremonyMemory({
           title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
           eventName: 'Graduation Ceremony ' + uploadYear,
@@ -403,6 +409,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
           thumbnailUrl,
           caption: uploadCaption,
           uploaderName: uploadName.trim() || ('Anonymous ' + uploadRole),
+          isStaged: result.isStaged,
           status: 'Pending'
         });
 
