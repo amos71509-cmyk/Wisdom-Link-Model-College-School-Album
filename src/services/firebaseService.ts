@@ -14,7 +14,7 @@ import {
   onSnapshot 
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { uploadFileToCloudinary, base64ToFile } from "../utils/uploadHelper";
+import { uploadFileToCloudinary, base64ToFile, deleteCloudinaryAsset } from "../utils/uploadHelper";
 import { 
   Student, 
   Superlative, 
@@ -105,21 +105,7 @@ export function sanitizeData(data: any): any {
  */
 export async function scrubCloudinaryMedia(urlOrUrls?: string | (string | undefined | null)[]): Promise<void> {
   if (!urlOrUrls) return;
-  const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
-  for (const u of urls) {
-    if (u && typeof u === 'string' && u.includes("cloudinary.com")) {
-      try {
-        console.log("[CLOUDINARY CLEANUP] Scrubbing media asset from cloud:", u);
-        await fetch("/api/delete-cloudinary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: u })
-        });
-      } catch (err) {
-        console.warn("[CLOUDINARY CLEANUP WARNING] Failed to scrub media:", u, err);
-      }
-    }
-  }
+  await deleteCloudinaryAsset(urlOrUrls);
 }
 
 /**
@@ -136,8 +122,9 @@ export async function submitToModeration(type: string, data: any): Promise<{ suc
     const submission: PendingSubmission = {
       id,
       type,
+      status: "Pending",
       submittedAt: new Date().toISOString(),
-      data: { ...sanitized, id: sanitized.id || id }
+      data: { ...sanitized, id: sanitized.id || id, status: "Pending" }
     };
     
     console.log(`[FIRESTORE WRITE ATTEMPT] Operation: setDoc, Path: ${fullPath}, Collection: submissions, DocID: ${id}`);
@@ -247,11 +234,7 @@ export async function approveSubmission(item: PendingSubmission): Promise<void> 
     // Background deletion request for the stale asset from Cloudinary
     if (oldImageUrl && oldImageUrl.includes("cloudinary.com")) {
       try {
-        await fetch("/api/delete-cloudinary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: oldImageUrl })
-        });
+        await deleteCloudinaryAsset(oldImageUrl);
       } catch (err) {
         console.error("Cloud cleanup warning for student portrait replace:", err);
       }
@@ -325,6 +308,65 @@ export async function approveSubmission(item: PendingSubmission): Promise<void> 
 }
 
 /**
+ * Deletes all media comments associated with a deleted media item (photo, video, community memory, graduation memory).
+ * Enforces "Remove from comments if applicable" requirement.
+ */
+export async function scrubAssociatedComments(mediaId?: string): Promise<void> {
+  if (!mediaId) return;
+  try {
+    const batch = writeBatch(db);
+    let count = 0;
+
+    // Check media comments (comments collection)
+    const commentsQ = query(collection(db, "comments"), where("mediaId", "==", mediaId));
+    const commentsSnap = await getDocs(commentsQ);
+    commentsSnap.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+      count++;
+    });
+
+    // Check graduation memory comments (graduation_memory_comments collection)
+    const gradCommentsQ = query(collection(db, "graduation_memory_comments"), where("memoryId", "==", mediaId));
+    const gradCommentsSnap = await getDocs(gradCommentsQ);
+    gradCommentsSnap.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+      count++;
+    });
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`[FIRESTORE CLEANUP] Scrubbed ${count} associated comment(s) for deleted media ID: ${mediaId}`);
+    }
+  } catch (err) {
+    console.warn(`[FIRESTORE CLEANUP WARNING] Failed to scrub comments for media ID ${mediaId}:`, err);
+  }
+}
+
+/**
+ * Unified deletion helper for approved media items (videos, photos, community memories, graduation memories, etc.).
+ * 1. Deletes associated Cloudinary assets.
+ * 2. Removes associated comments if applicable.
+ * 3. Deletes the Firestore document.
+ */
+export async function deleteApprovedMediaItem(collectionName: string, docId: string, mediaUrls: (string | undefined)[] = []): Promise<void> {
+  try {
+    // 1. Scrub associated Cloudinary assets
+    await scrubCloudinaryMedia(mediaUrls);
+
+    // 2. Remove associated comments if applicable
+    await scrubAssociatedComments(docId);
+
+    // 3. Delete Firestore document
+    const docRef = doc(db, collectionName, docId);
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Deleted ${collectionName}/${docId} and scrubbed all associated media/comments.`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${collectionName}/${docId}`);
+    throw err;
+  }
+}
+
+/**
  * 4. rejectSubmission(item)
  * Removes from submissions collection and scrubs orphaned media attachments from Cloudinary immediately.
  */
@@ -342,6 +384,8 @@ export async function rejectSubmission(item: PendingSubmission, reason: string =
   ];
   
   await scrubCloudinaryMedia(mediaUrls);
+  await scrubAssociatedComments(item.id);
+  await scrubAssociatedComments(item.data?.id);
   
   // Per explicit requirement: automatically delete rejected submissions from database immediately to save space!
   await deleteDoc(submissionRef);
@@ -694,9 +738,12 @@ export function subscribeStudents(callback: (students: Student[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: Student[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as Student);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as Student);
+      }
     });
-    console.log(`[FIRESTORE READ] Collection: students, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: students, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "students"));
 }
@@ -707,9 +754,12 @@ export function subscribeSuperlatives(callback: (superlatives: Superlative[]) =>
   return onSnapshot(q, (snapshot) => {
     const list: Superlative[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as Superlative);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as Superlative);
+      }
     });
-    console.log(`[FIRESTORE READ] Collection: superlatives, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: superlatives, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "superlatives"));
 }
@@ -720,9 +770,12 @@ export function subscribeTeacherTributes(callback: (tributes: TeacherTribute[]) 
   return onSnapshot(q, (snapshot) => {
     const list: TeacherTribute[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as TeacherTribute);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as TeacherTribute);
+      }
     });
-    console.log(`[FIRESTORE READ] Collection: teacher_tributes, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: teacher_tributes, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "teacher_tributes"));
 }
@@ -733,10 +786,13 @@ export function subscribeTimeline(callback: (events: TimelineEvent[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: TimelineEvent[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as TimelineEvent);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as TimelineEvent);
+      }
     });
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    console.log(`[FIRESTORE READ] Collection: timeline, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: timeline, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "timeline"));
 }
@@ -747,10 +803,13 @@ export function subscribeGuestbook(callback: (entries: GuestbookEntry[]) => void
   return onSnapshot(q, (snapshot) => {
     const list: GuestbookEntry[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as GuestbookEntry);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as GuestbookEntry);
+      }
     });
     list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    console.log(`[FIRESTORE READ] Collection: guestbook, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: guestbook, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "guestbook"));
 }
@@ -761,9 +820,12 @@ export function subscribePhotos(callback: (photos: Photo[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: Photo[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as Photo);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as Photo);
+      }
     });
-    console.log(`[FIRESTORE READ] Collection: photos, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: photos, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "photos"));
 }
@@ -774,9 +836,12 @@ export function subscribeVideos(callback: (videos: VideoMemory[]) => void) {
   return onSnapshot(q, (snapshot) => {
     const list: VideoMemory[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as VideoMemory);
+      const data = doc.data() as any;
+      if (data.processing !== true) {
+        list.push({ id: doc.id, ...data } as VideoMemory);
+      }
     });
-    console.log(`[FIRESTORE READ] Collection: videos, Count: ${list.length}, Query Filters: status == "Approved"`);
+    console.log(`[FIRESTORE READ] Collection: videos, Count: ${list.length}, Query Filters: status == "Approved" and processing == false`);
     callback(list);
   }, (err) => handleFirestoreError(err, OperationType.GET, "videos"));
 }
@@ -804,9 +869,9 @@ export function subscribeCommunityMemories(callback: (memories: CommunityMemory[
   return onSnapshot(q, (snapshot) => {
     const list: CommunityMemory[] = [];
     snapshot.forEach((doc) => {
-      const data = doc.data() as CommunityMemory;
-      if (data) {
-        list.push({ id: doc.id, ...data });
+      const data = doc.data() as any;
+      if (data && data.processing !== true) {
+        list.push({ id: doc.id, ...data } as CommunityMemory);
       }
     });
     // Sort by upload date or creation date descending
@@ -1105,7 +1170,10 @@ export function subscribeApprovedGraduationMemories(callback: (memories: Graduat
   return onSnapshot(q, (snapshot) => {
     const list: GraduationMemory[] = [];
     snapshot.forEach((doc) => {
-      list.push({ id: doc.id, ...doc.data() } as GraduationMemory);
+      const data = doc.data() as any;
+      if (data && data.processing !== true) {
+        list.push({ id: doc.id, ...data } as GraduationMemory);
+      }
     });
     // Sort descending by createdAt
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -1181,6 +1249,7 @@ export async function rejectGraduationMemory(id: string, adminName: string, reas
       const data = snap.data();
       await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
     }
+    await scrubAssociatedComments(id);
     await deleteDoc(docRef);
     console.log(`[FIRESTORE DELETE] Rejected and deleted graduation memory DocID: ${id}`);
   } catch (err) {
@@ -1197,6 +1266,7 @@ export async function deleteGraduationMemory(id: string): Promise<void> {
       const data = snap.data();
       await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
     }
+    await scrubAssociatedComments(id);
     await deleteDoc(docRef);
     console.log(`[FIRESTORE DELETE] Collection: graduation_memories, DocID: ${id}`);
   } catch (err) {
@@ -1286,6 +1356,49 @@ export async function deleteGraduationComment(commentId: string): Promise<void> 
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `graduation_memory_comments/${commentId}`);
     throw err;
+  }
+}
+
+/**
+ * Scans Firestore collections and removes any comment, graduation profile, or media upload
+ * that has been marked as Rejected or Deleted, ensuring unapproved/rejected items do not persist.
+ */
+export async function purgeRejectedAndDeletedFromFirestore(): Promise<void> {
+  if (!auth.currentUser) return;
+  const collectionsToClean = [
+    "comments",
+    "graduation_memory_comments",
+    "graduation_students",
+    "graduation_memories",
+    "community_memories",
+    "submissions",
+    "photos",
+    "videos",
+    "students",
+    "teacher_tributes",
+    "superlatives",
+    "guestbook"
+  ];
+  console.log("[DATABASE CLEANUP] Starting background scan for rejected/deleted items...");
+  let purgedCount = 0;
+  for (const colName of collectionsToClean) {
+    try {
+      const snap = await getDocs(collection(db, colName));
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        const status = data.status || '';
+        if (status === 'Rejected' || status === 'Deleted' || data.isDeleted === true || data.deleted === true) {
+          console.log(`[DATABASE CLEANUP] Purging record from ${colName}: ID = ${docSnap.id}`);
+          await deleteDoc(doc(db, colName, docSnap.id)).catch(() => {});
+          purgedCount++;
+        }
+      }
+    } catch (err) {
+      // Ignore collection errors if collection doesn't exist or permissions prevent full scan
+    }
+  }
+  if (purgedCount > 0) {
+    console.log(`[DATABASE CLEANUP] Completed! Purged ${purgedCount} rejected/deleted records.`);
   }
 }
 

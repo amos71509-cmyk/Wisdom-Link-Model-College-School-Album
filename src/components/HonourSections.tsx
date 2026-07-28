@@ -307,11 +307,11 @@ export function PrincipalHonourSection({ onCommentSubmitted }: PrincipalProps) {
           {/* Accent Overlap Box */}
           <div className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-[var(--primary)] to-[var(--accent)] opacity-[0.08] blur-xl" />
           
-          <div className="relative w-full max-w-md rounded-2xl overflow-hidden border border-gray-200/60 shadow-2xl bg-slate-950 group flex items-center justify-center p-1.5 min-h-[380px] sm:min-h-[460px]">
+          <div className="relative w-full max-w-md rounded-2xl overflow-hidden border border-gray-200/60 shadow-2xl bg-slate-950 group h-[440px] sm:h-[540px]">
             <img 
               src={getOptimizedImageUrl(principal.image, 1000)} 
               alt={principal.name} 
-              className="w-full h-auto max-h-[580px] object-contain rounded-xl bg-slate-950 filter saturate-[0.98] group-hover:scale-102 transition-transform duration-700"
+              className="absolute inset-0 w-full h-full object-cover filter saturate-[0.98] group-hover:scale-105 transition-transform duration-700"
               referrerPolicy="no-referrer"
             />
             {/* Subtle vignette overlay */}
@@ -337,7 +337,7 @@ export function PrincipalHonourSection({ onCommentSubmitted }: PrincipalProps) {
         <div className="lg:col-span-7 space-y-6 flex flex-col justify-center">
           <div className="space-y-2">
             <h4 className="text-[10px] sm:text-xs font-mono font-black tracking-[0.25em] text-[var(--primary)] uppercase">Leadership & Welcome</h4>
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight font-display">{principal.name}</h2>
+            <h2 className="text-3xl sm:text-[36px] font-semibold text-slate-900 tracking-tight font-display">{principal.name}</h2>
             <p className="text-sm font-bold text-slate-500 font-mono tracking-wider">{principal.title}</p>
           </div>
 

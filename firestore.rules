@@ -219,56 +219,56 @@ service cloud.firestore {
     // ==========================================
 
     match /students/{studentId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(studentId) && isValidStudent(incoming());
       allow update: if isAdmin() && isValidStudent(incoming());
       allow delete: if isAdmin();
     }
     
     match /superlatives/{superlativeId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(superlativeId) && isValidSuperlative(incoming());
       allow update: if isAdmin() && isValidSuperlative(incoming());
       allow delete: if isAdmin();
     }
     
     match /teacher_tributes/{tributeId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(tributeId) && isValidTribute(incoming());
       allow update: if isAdmin() && isValidTribute(incoming());
       allow delete: if isAdmin();
     }
     
     match /timeline/{eventId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(eventId) && isValidTimelineEvent(incoming());
       allow update: if isAdmin() && isValidTimelineEvent(incoming());
       allow delete: if isAdmin();
     }
     
     match /guestbook/{entryId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(entryId) && isValidGuestbookEntry(incoming());
       allow update: if isAdmin() && isValidGuestbookEntry(incoming());
       allow delete: if isAdmin();
     }
     
     match /videos/{videoId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isAdmin() && isValidId(videoId) && isValidVideo(incoming());
       allow update: if isAdmin() && isValidVideo(incoming());
       allow delete: if isAdmin();
     }
     
     match /photos/{photoId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isAdmin() && isValidId(photoId) && isValidPhoto(incoming());
       allow update: if isAdmin() && isValidPhoto(incoming());
       allow delete: if isAdmin();
     }
     
     match /custom_sections/{sectionId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if (isAdmin() || isNotSeeded()) && isValidId(sectionId) && isValidCustomSection(incoming());
       allow update: if isAdmin() && isValidCustomSection(incoming());
       allow delete: if isAdmin();
@@ -312,7 +312,7 @@ service cloud.firestore {
     // Anyone can create a pending memory submission.
     // Only admins can approve, update or delete them.
     match /community_memories/{memoryId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isValidId(memoryId) && 
                     isValidCommunityMemory(incoming()) && 
                     incoming().status == 'Pending' && 
@@ -327,7 +327,7 @@ service cloud.firestore {
     // Anyone can create a pending comment.
     // Only admins can approve, update or delete them.
     match /comments/{commentId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isValidId(commentId) && 
                     isValidComment(incoming()) && 
                     incoming().status == 'Pending';
@@ -359,7 +359,7 @@ service cloud.firestore {
     }
 
     match /graduation_memories/{memoryId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isValidId(memoryId) &&
                     isValidGraduationMemory(incoming()) &&
                     (incoming().status == 'Pending' || isAdmin());
@@ -369,7 +369,7 @@ service cloud.firestore {
     }
 
     match /graduation_memory_comments/{commentId} {
-      allow read: if true;
+      allow read: if isAdmin() || !('status' in resource.data) || resource.data.status == 'Approved';
       allow create: if isValidId(commentId) &&
                     isValidGraduationMemoryComment(incoming()) &&
                     incoming().status == 'Pending';

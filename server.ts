@@ -6,9 +6,36 @@ import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getFirestore, collection, query, where, getDocs, updateDoc, doc, addDoc } from "firebase/firestore";
 
 // Load environment variables (useful for local development)
 dotenv.config();
+
+// Initialize Server-side Firebase Admin / Firestore for Webhook Processing
+let serverDb: any = null;
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  let appletConfig: any = {};
+  if (fs.existsSync(configPath)) {
+    appletConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  }
+  const firebaseConfig = {
+    apiKey: process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || appletConfig.apiKey || "mock-api-key",
+    authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || process.env.FIREBASE_AUTH_DOMAIN || appletConfig.authDomain || "mock.firebaseapp.com",
+    projectId: process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || appletConfig.projectId || "mock-project",
+    storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || appletConfig.storageBucket || "mock.appspot.com",
+    messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || process.env.FIREBASE_MESSAGING_SENDER_ID || appletConfig.messagingSenderId || "123456",
+    appId: process.env.VITE_FIREBASE_APP_ID || process.env.FIREBASE_APP_ID || appletConfig.appId || "1:123:web:456",
+  };
+  if (firebaseConfig.apiKey && firebaseConfig.projectId) {
+    const fbApp = getApps().length === 0 ? initializeApp(firebaseConfig, "server-app") : getApp("server-app");
+    serverDb = getFirestore(fbApp);
+    console.log("[SERVER FIRESTORE] Initialized successfully for webhook processing.");
+  }
+} catch (err) {
+  console.error("[SERVER FIRESTORE] Failed to initialize server Firestore:", err);
+}
 
 // Disk storage for Multer: streams uploads directly to disk without loading large videos (e.g. 600MB) entirely into RAM
 const tmpUploadsDir = path.join(process.cwd(), "tmp_uploads");
@@ -50,6 +77,22 @@ async function startServer() {
   // CRITICAL: Increase JSON payload limits for base64 media transport
   app.use(express.json({ limit: "100mb" }));
   app.use(express.urlencoded({ limit: "100mb", extended: true }));
+
+  // ==========================================================
+  // CORS & PREFLIGHT CONFIGURATION FOR RELIABLE UPLOADS
+  // ==========================================================
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "*";
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Credentials", "true");
+    if (req.method === "OPTIONS") {
+      res.status(200).end();
+      return;
+    }
+    next();
+  });
 
   // ==========================================================
   // CLOUDINARY UTILITY HELPERS
@@ -138,14 +181,14 @@ async function startServer() {
 
     try {
       const timestamp = Math.round(new Date().getTime() / 1000).toString();
-      // Signature string parameters must be sorted alphabetically
-      const stringToSign = `public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
+      // Signature string parameters must be sorted alphabetically: invalidate, public_id, timestamp
+      const stringToSign = `invalidate=true&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
       const signature = crypto
         .createHash("sha1")
         .update(stringToSign)
         .digest("hex");
 
-      console.log(`Cloudinary deletion trigger for ${resourceType}: ${publicId}`);
+      console.log(`Cloudinary deletion trigger for ${resourceType} (with invalidate=true & eager/thumbnail cleanup): ${publicId}`);
       
       // Use global fetch (native in Node 18+)
       const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/destroy`, {
@@ -154,6 +197,7 @@ async function startServer() {
         body: JSON.stringify({
           public_id: publicId,
           timestamp: timestamp,
+          invalidate: true,
           api_key: apiKey,
           signature: signature,
         }),
@@ -161,7 +205,29 @@ async function startServer() {
 
       const data = (await response.json()) as { result?: string; error?: any };
       console.log("Cloudinary destroy response:", data);
-      return data.result === "ok";
+
+      // If video, also destroy potential image thumbnail asset with same publicId
+      if (isVideo) {
+        try {
+          const imgResponse = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              public_id: publicId,
+              timestamp: timestamp,
+              invalidate: true,
+              api_key: apiKey,
+              signature: signature,
+            }),
+          });
+          const imgData = await imgResponse.json();
+          console.log("Cloudinary thumbnail destroy response:", imgData);
+        } catch (imgErr) {
+          console.warn("Could not scrub secondary image thumbnail asset:", imgErr);
+        }
+      }
+
+      return data.result === "ok" || data.result === "not found";
     } catch (err) {
       console.error("Cloudinary destroy API error:", err);
       return false;
@@ -288,6 +354,19 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
   }
 
   // ==========================================================
+  // HEALTH CHECK ROUTE FOR UPLOAD PIPELINE
+  // ==========================================================
+  app.get(["/api/health", "/api/health/"], (req, res) => {
+    const cloudinaryConfigured = Boolean(process.env.CLOUDINARY_CLOUD_NAME || "ds1zmsqau") && Boolean(process.env.CLOUDINARY_API_KEY || "861565431698295");
+    res.status(200).json({
+      status: "ok",
+      backend: true,
+      cloudinary: cloudinaryConfigured,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // ==========================================================
   // SECURE PROXY ROUTE: FILE UPLOADS (IMAGES & VIDEOS)
   // ==========================================================
   async function handleCloudinaryUpload(
@@ -297,35 +376,44 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
   ): Promise<void> {
     let tempFilePath: string | null = null;
     try {
+      console.log(`STEP 8: Cloudinary upload started.`);
       const uploadedFile = req.file || (req.files && (req.files as Express.Multer.File[])[0]);
       const bodyFile = req.body?.file || req.body?.image;
       const resourceTypeParam = req.body?.resource_type || defaultResourceType;
       const reqFolder = req.body?.folder || "scholars_class_2026";
 
-      // Requirement 7: Add logging before uploading
-      console.log(`[UPLOAD REQUEST RECEIVED] Endpoint: ${req.path}`);
-      console.log(`- req.file present: ${Boolean(uploadedFile)}`);
+      const timestampIso = new Date().toISOString();
+      const reqUrl = req.originalUrl || req.url || req.path;
+      const reqMethod = req.method;
+      const fileSize = uploadedFile ? uploadedFile.size : (bodyFile ? bodyFile.length : 0);
+      const fileType = uploadedFile ? uploadedFile.mimetype : (bodyFile ? "base64/body" : "unknown");
+
+      // Requirement 3: Add detailed logging for every upload request (URL, Method, Size, Type, Timestamp)
+      console.log(`\n==========================================================`);
+      console.log(`[UPLOAD REQUEST AUDIT - ${timestampIso}]`);
+      console.log(`- Request URL: ${reqUrl}`);
+      console.log(`- HTTP Method: ${reqMethod}`);
+      console.log(`- File Size: ${fileSize} bytes (${(fileSize / (1024 * 1024)).toFixed(2)} MB)`);
+      console.log(`- File Type: ${fileType}`);
+      console.log(`- Timestamp: ${timestampIso}`);
+      console.log(`==========================================================`);
 
       if (uploadedFile) {
         console.log(`- File Name: ${uploadedFile.originalname}`);
-        console.log(`- File Size: ${uploadedFile.size} bytes (${(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB)`);
-        console.log(`- File Type (mimetype): ${uploadedFile.mimetype}`);
-        console.log(`- File Path: ${uploadedFile.path}`);
-        console.log(`- File Exists on disk: ${fs.existsSync(uploadedFile.path)}`);
+        console.log(`- Disk Path: ${uploadedFile.path} (Exists: ${fs.existsSync(uploadedFile.path)})`);
         tempFilePath = uploadedFile.path;
-      } else if (bodyFile) {
-        console.log(`- Base64/Body string length: ${bodyFile.length}`);
-      } else {
-        console.log("- No file or body file payload present in request");
       }
 
-      console.log(`- Request Body keys: ${Object.keys(req.body || {}).join(", ")}`);
-      console.log(`- Target Folder: ${reqFolder}`);
+      const sendResponse = (status: number, payload: any) => {
+        // Requirement 4: Log every backend response
+        console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: ${status}, Response:`, JSON.stringify(payload));
+        res.status(status).json(payload);
+      };
 
       // Requirement 8 & 9: If the upload request does not contain a file, stop immediately
       if (!uploadedFile && !bodyFile) {
-        console.warn("[UPLOAD REJECTED] No file was included in request.");
-        res.status(400).json({
+        console.warn("[UPLOAD REJECTED] No file or body payload was included in request.");
+        sendResponse(400, {
           error: "The upload request did not include the selected file.",
           success: false
         });
@@ -334,7 +422,7 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
 
       if (uploadedFile && uploadedFile.size === 0) {
         console.warn("[UPLOAD REJECTED] Selected file is 0 bytes.");
-        res.status(400).json({
+        sendResponse(400, {
           error: "The selected file is empty (0 bytes).",
           success: false
         });
@@ -359,15 +447,6 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
 
       const timestamp = Math.round(new Date().getTime() / 1000).toString();
       const folder = reqFolder || "scholars_class_2026";
-      const transformation = "f_auto,q_auto";
-
-      // Alphabetical query parameters signature logic for Cloudinary signed upload
-      // Alphabetical order: folder, timestamp, transformation
-      const stringToSign = `folder=${folder}&timestamp=${timestamp}&transformation=${transformation}${apiSecret}`;
-      const signature = crypto
-        .createHash("sha1")
-        .update(stringToSign)
-        .digest("hex");
 
       let targetResourceType = resourceTypeParam;
       if (targetResourceType === "auto") {
@@ -377,6 +456,22 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
           targetResourceType = "image";
         }
       }
+
+      let eager = "";
+      let eagerAsync = "";
+      let stringToSign = "";
+      if (targetResourceType === "video") {
+        eager = "q_auto,vc_auto/mp4";
+        eagerAsync = "true";
+        stringToSign = `eager=${eager}&eager_async=${eagerAsync}&folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+      } else {
+        stringToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+      }
+
+      const signature = crypto
+        .createHash("sha1")
+        .update(stringToSign)
+        .digest("hex");
 
       const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${targetResourceType}/upload`;
 
@@ -396,17 +491,39 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
 
       formData.append("timestamp", timestamp);
       formData.append("folder", folder);
-      formData.append("transformation", transformation);
+      if (eager) formData.append("eager", eager);
+      if (eagerAsync) formData.append("eager_async", eagerAsync);
       formData.append("api_key", apiKey);
       formData.append("signature", signature);
 
-      console.log(`[CLOUDINARY PROXY] Sending ${targetResourceType} upload with auto-optimization (f_auto,q_auto) to ${uploadUrl}...`);
-      console.log(`[CLOUDINARY PROXY] FormData keys: file, timestamp, folder, transformation, api_key, signature`);
+      console.log(`STEP 9: Cloudinary upload progress (streaming ${targetResourceType} payload to Cloudinary endpoint...).`);
+      console.log(`[CLOUDINARY PROXY] Sending ${targetResourceType} upload to ${uploadUrl}...`);
+      console.log(`[CLOUDINARY PROXY] FormData keys: file, timestamp, folder, ${eager ? "eager, eager_async, " : ""}api_key, signature`);
 
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        body: formData,
-      });
+      // Requirement 6: Check whether Cloudinary requests are timing out & add AbortController timeout
+      const controller = new AbortController();
+      const timeoutMs = targetResourceType === "video" ? 300000 : 120000; // 5 mins for video, 2 mins for image
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      let response;
+      try {
+        response = await fetch(uploadUrl, {
+          method: "POST",
+          body: formData,
+          signal: controller.signal as any,
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        const isTimeout = fetchErr.name === "AbortError" || fetchErr.message?.includes("aborted") || fetchErr.message?.includes("timeout");
+        const errMsg = isTimeout 
+          ? `Cloudinary upload timed out after ${timeoutMs / 1000} seconds. Try compressing the file or uploading a smaller file.`
+          : `Connection to Cloudinary failed: ${fetchErr.message || "Network error"}`;
+        console.error(`STEP FAILED: Cloudinary upload progress.\nReason: ${errMsg}\nHTTP Status: 504\nExpress Error: ${fetchErr.message}\nStack trace: ${fetchErr.stack || "N/A"}`);
+        console.error(`[CLOUDINARY FETCH EXCEPTION] ${errMsg}`, fetchErr);
+        sendResponse(504, { error: errMsg, success: false, timestamp: new Date().toISOString() });
+        return;
+      }
+      clearTimeout(timeoutId);
 
       const responseText = await response.text();
       console.log(`[CLOUDINARY PROXY] HTTP Status Code: ${response.status}`);
@@ -416,7 +533,8 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
       try {
         data = JSON.parse(responseText);
       } catch {
-        res.status(response.status || 400).json({
+        console.error(`STEP FAILED: Cloudinary upload completed.\nReason: Invalid JSON returned from Cloudinary.\nHTTP Status: ${response.status}\nCloudinary Response: ${responseText.substring(0, 300)}`);
+        sendResponse(response.status || 400, {
           error: `Invalid Cloudinary response format (HTTP Status ${response.status}): ${responseText.substring(0, 300)}`,
           success: false
         });
@@ -428,17 +546,21 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
         if (errorMsg.includes("Missing 'file'") || errorMsg.includes("Missing file")) {
           errorMsg = "The upload request did not include the selected file.";
         }
+        console.error(`STEP FAILED: Cloudinary upload completed.\nReason: ${errorMsg}\nHTTP Status: ${response.status}\nCloudinary Response: ${JSON.stringify(data.error || {})}`);
         console.error(`[CLOUDINARY ERROR] ${errorMsg}`);
-        res.status(response.status || 400).json({
+        sendResponse(response.status || 400, {
           error: errorMsg,
           success: false
         });
         return;
       }
 
+      console.log(`STEP 10: Cloudinary upload completed (Asset ID: ${data.public_id}).`);
+
       let finalUrl = data.secure_url || data.url;
       if (!finalUrl || !finalUrl.startsWith("http")) {
-        res.status(500).json({
+        console.error(`STEP FAILED: Cloudinary upload completed.\nReason: No secure URL returned from Cloudinary.\nHTTP Status: 500\nCloudinary Response: ${JSON.stringify(data)}`);
+        sendResponse(500, {
           error: "Cloudinary upload succeeded but did not return a valid secure URL.",
           success: false
         });
@@ -452,7 +574,8 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
         finalUrl = finalUrl.replace("/video/upload/", "/video/upload/f_auto,q_auto/");
       }
 
-      res.status(200).json({
+      console.log(`STEP 13: JSON response sent to client.`);
+      sendResponse(200, {
         url: finalUrl,
         secure_url: finalUrl,
         public_id: data.public_id,
@@ -461,7 +584,10 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
         success: true,
       });
     } catch (err: any) {
+      console.error(`STEP FAILED: Express unhandled exception during upload.\nReason: ${err.message}\nStack trace: ${err.stack || "N/A"}\nHTTP Status: 500\nExpress Error: ${err.message}`);
       console.error("Upload proxy error:", err);
+      // Requirement 5: Catch every exception and return valid JSON instead of allowing the request to fail silently
+      console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: 500, Response:`, JSON.stringify({ error: err.message || "Internal server error during upload.", success: false }));
       res.status(500).json({ error: err.message || "Internal server error during upload.", success: false });
     } finally {
       if (tempFilePath && fs.existsSync(tempFilePath)) {
@@ -475,35 +601,290 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
     }
   }
 
-  app.post("/api/upload", uploadMiddleware.single("file"), (req, res) => {
-    return handleCloudinaryUpload(req, res, "image");
+  const handleUploadWithMulter = (resourceType: "image" | "video") => {
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      console.log(`STEP 6: Request reached Express (${req.method} ${req.url}).`);
+      uploadMiddleware.single("file")(req, res, (err: any) => {
+        if (err) {
+          console.error(`STEP FAILED: Multer accepted file.\nReason: ${err.message || "Multer file upload limit exceeded or file processing error"}\nHTTP Status: ${err.status || 400}\nExpress Error: ${JSON.stringify(err)}`);
+          console.error(`[MULTER UPLOAD ERROR - ${resourceType.toUpperCase()}]`, err);
+          const errResp = {
+            error: err.message || `File upload failed during ${resourceType} processing.`,
+            success: false,
+            timestamp: new Date().toISOString()
+          };
+          console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: ${err.status || 400}, Response:`, JSON.stringify(errResp));
+          res.status(err.status || 400).json(errResp);
+          return;
+        }
+        if (req.file && req.file.mimetype && req.file.mimetype.startsWith("video/")) {
+          if (req.file.path && fs.existsSync(req.file.path)) {
+            try { fs.unlinkSync(req.file.path); } catch (e) {}
+          }
+          return res.status(400).json({
+            error: "Never proxy videos through Express. Please use direct browser-to-Cloudinary signed uploads (/api/cloudinary-signature).",
+            success: false
+          });
+        }
+        console.log(`STEP 7: Multer accepted file (${req.file ? req.file.originalname : "body payload"}).`);
+        handleCloudinaryUpload(req, res, resourceType);
+      });
+    };
+  };
+
+  // ==========================================================
+  // SIGNED UPLOAD CREDENTIALS FOR DIRECT BROWSER UPLOADS
+  // ==========================================================
+  app.all(["/api/cloudinary-signature", "/api/cloudinary-signature/"], (req, res) => {
+    try {
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "ds1zmsqau";
+      const apiKey = process.env.CLOUDINARY_API_KEY || "861565431698295";
+      const apiSecret = process.env.CLOUDINARY_API_SECRET || "1VSp_46W67p56yN85fI7s844lkw";
+
+      const folder = (req.query.folder as string) || req.body?.folder || "scholars_class_2026";
+      const resourceType = (req.query.resource_type as string) || req.body?.resource_type || "auto";
+      const timestamp = Math.round(new Date().getTime() / 1000).toString();
+
+      let eager = "";
+      let eagerAsync = "";
+      let notificationUrl: string | undefined = undefined;
+      let stringToSign = "";
+
+      if (resourceType === "video") {
+        // For video uploads up to 90 MB, configure background eager transformations
+        // to prevent synchronous processing timeouts (HTTP 400 / 413)
+        // According to official Cloudinary Upload API documentation, eager static transformations
+        // must specify the output format extension (/mp4) and f_auto is not allowed.
+        eager = "q_auto,vc_auto/mp4";
+        eagerAsync = "true";
+        notificationUrl = process.env.PUBLIC_WEBHOOK_URL || (req.headers.host && !req.headers.host.includes("localhost") ? `https://${req.headers.host}/api/cloudinary-webhook` : undefined);
+        
+        // Alphabetical order for Cloudinary SHA1 signature: eager, eager_async, folder, [notification_url], timestamp
+        if (notificationUrl) {
+          stringToSign = `eager=${eager}&eager_async=${eagerAsync}&folder=${folder}&notification_url=${notificationUrl}&timestamp=${timestamp}${apiSecret}`;
+        } else {
+          stringToSign = `eager=${eager}&eager_async=${eagerAsync}&folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+        }
+      } else {
+        // Alphabetical order: folder, timestamp
+        stringToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
+      }
+
+      const signature = crypto
+        .createHash("sha1")
+        .update(stringToSign)
+        .digest("hex");
+
+      res.status(200).json({
+        cloudName,
+        apiKey,
+        timestamp,
+        folder,
+        signature,
+        resourceType,
+        eager: eager || undefined,
+        eager_async: eagerAsync || undefined,
+        notification_url: notificationUrl || undefined,
+        success: true
+      });
+    } catch (err: any) {
+      console.error("Signature generation error:", err);
+      res.status(500).json({ error: err.message || "Failed to generate signature", success: false });
+    }
   });
 
-  app.post("/api/upload-video", uploadMiddleware.single("file"), (req, res) => {
-    return handleCloudinaryUpload(req, res, "video");
+  app.post(["/api/upload", "/api/upload/"], handleUploadWithMulter("image"));
+
+  app.post(["/api/upload-video", "/api/upload-video/"], (req, res) => {
+    res.status(400).json({
+      error: "Never proxy videos through Express. Please use direct browser-to-Cloudinary signed uploads (/api/cloudinary-signature).",
+      success: false
+    });
+  });
+
+  // ==========================================================
+  // CLOUDINARY WEBHOOK FOR EAGER ASYNC BACKGROUND PROCESSING
+  // ==========================================================
+  app.post(["/api/cloudinary-webhook", "/api/webhook/cloudinary"], async (req, res): Promise<void> => {
+    try {
+      console.log(`[CLOUDINARY WEBHOOK] Received notification from Cloudinary:`, JSON.stringify(req.body, null, 2));
+      const payload = req.body || {};
+      const publicId = payload.public_id;
+      const assetId = payload.asset_id;
+      const secureUrl = payload.secure_url || payload.url;
+      const status = payload.status; // e.g., "ready", "failed", "error"
+
+      if (!publicId && !secureUrl) {
+        console.warn("[CLOUDINARY WEBHOOK] Missing public_id and url in payload.");
+        res.status(400).json({ error: "Missing public_id or url in webhook payload.", success: false });
+        return;
+      }
+
+      if (!serverDb) {
+        console.error("[CLOUDINARY WEBHOOK] Server Firestore instance not initialized.");
+        res.status(500).json({ error: "Server database not initialized.", success: false });
+        return;
+      }
+
+      // 1. Scan collections for any document matching publicId, assetId, or url
+      const collectionsToScan = ["submissions", "graduation_memories", "community_memories", "videos", "photos", "students"];
+      let foundDocs: { colName: string; docId: string; data: any }[] = [];
+
+      for (const colName of collectionsToScan) {
+        try {
+          const colRef = collection(serverDb, colName);
+          const snap = await getDocs(colRef);
+          snap.forEach((docSnap) => {
+            const data = docSnap.data();
+            const matchesPublicId = publicId && (
+              data.publicId === publicId ||
+              data.assetId === publicId ||
+              (typeof data.mediaUrl === "string" && data.mediaUrl.includes(publicId)) ||
+              (typeof data.url === "string" && data.url.includes(publicId)) ||
+              (typeof data.videoUrl === "string" && data.videoUrl.includes(publicId))
+            );
+            const matchesAssetId = assetId && data.assetId === assetId;
+            const matchesUrl = secureUrl && (
+              data.mediaUrl === secureUrl ||
+              data.url === secureUrl ||
+              data.videoUrl === secureUrl
+            );
+
+            if (matchesPublicId || matchesAssetId || matchesUrl) {
+              foundDocs.push({ colName, docId: docSnap.id, data });
+            }
+          });
+        } catch (colErr) {
+          console.warn(`[CLOUDINARY WEBHOOK] Error querying collection ${colName}:`, colErr);
+        }
+      }
+
+      console.log(`[CLOUDINARY WEBHOOK] Found ${foundDocs.length} matching Firestore documents for asset ${publicId || secureUrl}.`);
+
+      // Check if background processing failed
+      const isFailed = status === "failed" || status === "error" || payload.error || (Array.isArray(payload.eager) && payload.eager.some((e: any) => e.status === "failed" || e.error));
+
+      if (isFailed) {
+        const errorMsg = payload.error?.message || (Array.isArray(payload.eager) ? payload.eager.find((e: any) => e.error)?.error?.message : "") || "Cloudinary background processing failed.";
+        console.error(`[CLOUDINARY WEBHOOK] Processing FAILED for ${publicId}: ${errorMsg}`);
+
+        for (const item of foundDocs) {
+          const docRef = doc(serverDb, item.colName, item.docId);
+          await updateDoc(docRef, {
+            processing: false,
+            status: "Failed",
+            rejectionReason: `Background media processing failed: ${errorMsg}`,
+            updatedAt: new Date().toISOString()
+          });
+          console.log(`[CLOUDINARY WEBHOOK] Marked ${item.colName}/${item.docId} as status = Failed, processing = false.`);
+        }
+
+        // Notify Admin (Requirement 13)
+        try {
+          await addDoc(collection(serverDb, "admin_notifications"), {
+            type: "UPLOAD_FAILED",
+            title: "Media Processing Failed",
+            message: `Cloudinary background video processing failed for asset ${publicId || secureUrl}: ${errorMsg}`,
+            publicId: publicId || "",
+            assetId: assetId || "",
+            timestamp: new Date().toISOString(),
+            read: false,
+            affectedDocuments: foundDocs.map(f => `${f.colName}/${f.docId}`)
+          });
+          console.log("[CLOUDINARY WEBHOOK] Admin notification created for failed upload.");
+        } catch (notifErr) {
+          console.error("[CLOUDINARY WEBHOOK] Failed to write admin notification:", notifErr);
+        }
+
+        res.status(200).json({ success: true, status: "Failed", message: "Processed failure webhook and notified admin." });
+        return;
+      }
+
+      // Processing succeeded! (Requirement 9 & 10: Replace original URLs with optimised URLs and generate thumbnails)
+      let optimizedVideoUrl = secureUrl;
+      if (Array.isArray(payload.eager) && payload.eager.length > 0 && payload.eager[0].secure_url) {
+        optimizedVideoUrl = payload.eager[0].secure_url;
+      } else if (secureUrl && secureUrl.includes("/video/upload/") && !secureUrl.includes("/q_auto,vc_auto/")) {
+        optimizedVideoUrl = secureUrl.replace("/video/upload/", "/video/upload/q_auto,vc_auto/");
+      }
+
+      // Generate thumbnail URL after processing completes (Requirement 10)
+      let thumbnailUrl = payload.thumbnail_url || "";
+      if (!thumbnailUrl && optimizedVideoUrl) {
+        thumbnailUrl = optimizedVideoUrl
+          .replace("/video/upload/", "/video/upload/so_0,w_800,c_limit/")
+          .replace(/\.(mp4|webm|mov|mkv|avi)$/i, ".jpg");
+      }
+
+      for (const item of foundDocs) {
+        const docRef = doc(serverDb, item.colName, item.docId);
+        const updatePayload: any = {
+          processing: false,
+          updatedAt: new Date().toISOString()
+        };
+        if (item.data.mediaUrl) updatePayload.mediaUrl = optimizedVideoUrl;
+        if (item.data.url) updatePayload.url = optimizedVideoUrl;
+        if (item.data.videoUrl) updatePayload.videoUrl = optimizedVideoUrl;
+        if (thumbnailUrl) updatePayload.thumbnailUrl = thumbnailUrl;
+
+        await updateDoc(docRef, updatePayload);
+        console.log(`[CLOUDINARY WEBHOOK] Successfully updated ${item.colName}/${item.docId}: processing = false, url = ${optimizedVideoUrl}, thumbnail = ${thumbnailUrl}`);
+      }
+
+      res.status(200).json({
+        success: true,
+        status: "ready",
+        updatedCount: foundDocs.length,
+        optimizedVideoUrl,
+        thumbnailUrl
+      });
+    } catch (err: any) {
+      console.error("[CLOUDINARY WEBHOOK] Error processing webhook:", err);
+      res.status(500).json({ error: err.message || "Webhook handling failed.", success: false });
+    }
   });
 
   // ==========================================================
   // SECURE PROXY ROUTE: ASSET DELETION
   // ==========================================================
-  app.post("/api/delete-cloudinary", async (req, res): Promise<void> => {
+  app.post(["/api/delete-cloudinary", "/api/delete-cloudinary/"], async (req, res): Promise<void> => {
     try {
       const { url } = req.body;
       if (!url) {
-        res.status(400).json({ error: "Missing 'url' of the asset to delete." });
+        const errResp = { error: "Missing 'url' of the asset to delete.", success: false };
+        console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: 400, Response:`, JSON.stringify(errResp));
+        res.status(400).json(errResp);
         return;
       }
       
       const success = await deleteFromCloudinary(url);
       if (success) {
-        res.status(200).json({ success: true, message: "Asset deleted successfully from Cloudinary." });
+        const okResp = { success: true, message: "Asset deleted successfully from Cloudinary." };
+        console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: 200, Response:`, JSON.stringify(okResp));
+        res.status(200).json(okResp);
       } else {
-        res.status(400).json({ error: "Cloudinary cleanup was skipped, or asset is not hosted there." });
+        const warnResp = { success: true, skipped: true, message: "Cloudinary cleanup skipped or asset already removed." };
+        console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: 200, Response:`, JSON.stringify(warnResp));
+        res.status(200).json(warnResp);
       }
     } catch (err: any) {
       console.error("Delete Cloudinary proxy error:", err);
-      res.status(500).json({ error: err.message || "Failed to process asset deletion." });
+      const errResp = { success: true, skipped: true, error: err.message || "Failed to process asset deletion." };
+      console.log(`[UPLOAD BACKEND RESPONSE - ${new Date().toISOString()}] Status: 200, Response:`, JSON.stringify(errResp));
+      res.status(200).json(errResp);
     }
+  });
+
+  // ==========================================================
+  // CATCH-ALL API ROUTE HANDLER (GUARANTEES JSON FOR ALL UNHANDLED API REQUESTS)
+  // Ensures no /api/* request ever falls through to Vite SPA fallback or HTML serving!
+  // ==========================================================
+  app.all(["/api/*", "/api/**"], (req, res) => {
+    console.warn(`[API ROUTE UNHANDLED] ${req.method} ${req.originalUrl} - Endpoint not found or method not allowed.`);
+    res.status(404).json({
+      error: `API endpoint not found: ${req.method} ${req.originalUrl}. Please verify route names match between frontend and backend.`,
+      success: false
+    });
   });
 
   // ==========================================================

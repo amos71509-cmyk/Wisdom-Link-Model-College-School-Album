@@ -126,6 +126,9 @@ export interface VideoMemory {
   url: string;
   thumbnailUrl?: string;
   uploadedAt: string;
+  status?: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
+  processing?: boolean;
+  publicId?: string;
 }
 
 export interface Photo {
@@ -135,6 +138,9 @@ export interface Photo {
   submittedBy: string;
   role: string;
   uploadedAt: string;
+  status?: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
+  processing?: boolean;
+  publicId?: string;
 }
 
 export interface AdminUser {
@@ -158,11 +164,13 @@ export interface PendingSubmission {
   type: string;
   submittedAt: string;
   data: any;
-  status?: 'Pending' | 'Approved' | 'Rejected';
+  status?: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
   approved?: boolean;
   approvedAt?: string;
   approvedBy?: string;
   updatedAt?: string;
+  processing?: boolean;
+  publicId?: string;
 }
 
 export interface CommunityMemory {
@@ -177,7 +185,7 @@ export interface CommunityMemory {
   mediaUrl: string;
   thumbnailUrl?: string;
   uploadDate: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
   approvedBy?: string;
   approvedDate?: string;
   rejectionReason?: string;
@@ -185,6 +193,8 @@ export interface CommunityMemory {
   isStaged?: boolean;
   createdAt: string;
   updatedAt: string;
+  processing?: boolean;
+  publicId?: string;
 }
 
 export interface MediaComment {
@@ -218,6 +228,8 @@ export interface GraduationStudent {
   updatedAt: string;
   status: 'Imported' | 'Pending' | 'Approved' | 'Rejected';
   profilePicture?: string;
+  image?: string;
+  isStaged?: boolean;
   gallery?: string[];
   favoriteMemory?: string;
   quote?: string;
@@ -244,7 +256,7 @@ export interface GraduationMemory {
   mediaUrl: string;
   thumbnailUrl?: string;
   caption: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Failed';
   approvedBy?: string;
   approvedAt?: string;
   rejectedBy?: string;
@@ -256,6 +268,8 @@ export interface GraduationMemory {
   uploaderName?: string;
   createdAt: string;
   updatedAt: string;
+  processing?: boolean;
+  publicId?: string;
 }
 
 export interface GraduationMemoryComment {

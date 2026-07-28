@@ -1,19 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Award, Camera, Heart, Play, Sparkles, Users, Video, X, CheckCircle2, 
-  UploadCloud, Search, Filter, MessageSquare, Share2, Download, Send, 
-  ThumbsUp, Loader2, Calendar, Film, Image as ImageIcon, ShieldCheck, 
-  Copy, Check, Volume2, VolumeX, Eye, ArrowLeft
+  UploadCloud, Search, Filter, MessageSquare, Download, ThumbsUp, Loader2, 
+  Calendar, Film, Image as ImageIcon, ShieldCheck, ArrowLeft
 } from 'lucide-react';
-import { GraduationMemory, GraduationMemoryComment } from '../types';
+import { GraduationMemory } from '../types';
 import { 
   subscribeApprovedGraduationMemories, 
-  submitGraduationCeremonyMemory,
-  toggleLike,
-  subscribeMediaLikes,
-  addGraduationMemoryComment,
-  subscribeGraduationMemoryComments
+  submitGraduationCeremonyMemory
 } from '../services/firebaseService';
+import GraduationReelsViewer from './GraduationReelsViewer';
 import { compressImage } from '../lib/imageCompressor';
 import { getCloudinaryThumbnail } from '../utils/videoUtils';
 import { getOptimizedImageUrl } from '../utils/imageUtils';
@@ -197,14 +193,6 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
 
   // Fullscreen Viewer State
   const [selectedItem, setSelectedItem] = useState<GraduationMemory | null>(null);
-  const [activeComments, setActiveComments] = useState<GraduationMemoryComment[]>([]);
-  const [newCommentText, setNewCommentText] = useState('');
-  const [newCommentName, setNewCommentName] = useState('');
-  const [commentSubmitting, setCommentSubmitting] = useState(false);
-  const [commentSuccessNotice, setCommentSuccessNotice] = useState(false);
-  const [hasLiked, setHasLiked] = useState(false);
-  const [currentLikes, setCurrentLikes] = useState(0);
-  const [copiedLink, setCopiedLink] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalBodyRef = useRef<HTMLDivElement>(null);
@@ -231,18 +219,20 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     setIsUploadModalOpen(true);
   };
 
-  // Lock background scroll when modal is open & scroll modal to top
+  // Lock background scroll when modal or media viewer is open
   useEffect(() => {
-    if (isUploadModalOpen) {
+    if (isUploadModalOpen || selectedItem) {
       document.body.style.overflow = 'hidden';
       
-      // Auto-scroll modal body container to top 0
-      const timer = setTimeout(() => {
-        if (modalBodyRef.current) {
-          modalBodyRef.current.scrollTop = 0;
-        }
-      }, 20);
-      return () => clearTimeout(timer);
+      if (isUploadModalOpen) {
+        // Auto-scroll modal body container to top 0
+        const timer = setTimeout(() => {
+          if (modalBodyRef.current) {
+            modalBodyRef.current.scrollTop = 0;
+          }
+        }, 20);
+        return () => clearTimeout(timer);
+      }
     } else {
       document.body.style.overflow = '';
     }
@@ -250,7 +240,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isUploadModalOpen]);
+  }, [isUploadModalOpen, selectedItem]);
 
   // Real-time Firestore subscription to Approved Graduation Memories
   useEffect(() => {
@@ -264,29 +254,6 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     });
     return () => unsub();
   }, []);
-
-  // Handle Likes & Comments for Fullscreen Viewer
-  useEffect(() => {
-    if (!selectedItem) return;
-
-    setCurrentLikes(selectedItem.likesCount || 0);
-
-    // Likes subscription
-    const unsubLikes = subscribeMediaLikes(selectedItem.id, (count, userHasLiked) => {
-      setCurrentLikes(count);
-      setHasLiked(userHasLiked);
-    });
-
-    // Comments subscription
-    const unsubComments = subscribeGraduationMemoryComments(selectedItem.id, (commentsList) => {
-      setActiveComments(commentsList);
-    });
-
-    return () => {
-      unsubLikes();
-      unsubComments();
-    };
-  }, [selectedItem]);
 
   // Video Autoplay on Scroll (Intersection Observer)
   useEffect(() => {
@@ -441,56 +408,6 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     }
   };
 
-  // Toggle Like
-  const handleToggleLike = async () => {
-    if (!selectedItem) return;
-    const newLikedState = await toggleLike(selectedItem.id);
-    setHasLiked(newLikedState);
-  };
-
-  // Post Comment
-  const handlePostComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedItem || !newCommentText.trim()) return;
-
-    setCommentSubmitting(true);
-    try {
-      await addGraduationMemoryComment({
-        memoryId: selectedItem.id,
-        authorName: newCommentName.trim() || 'Visitor',
-        authorRole: 'Community Member',
-        text: newCommentText.trim()
-      });
-
-      setNewCommentText('');
-      setCommentSubmitting(false);
-      setCommentSuccessNotice(true);
-      setTimeout(() => setCommentSuccessNotice(false), 4000);
-    } catch (err) {
-      console.error(err);
-      setCommentSubmitting(false);
-    }
-  };
-
-  // Social Share Handler
-  const handleShare = (platform: 'whatsapp' | 'twitter' | 'facebook' | 'copy') => {
-    if (!selectedItem) return;
-    const shareUrl = window.location.href;
-    const text = `Check out this graduation ceremony memory from Wisdom Link Model College: "${selectedItem.caption}"`;
-
-    if (platform === 'whatsapp') {
-      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text + ' ' + shareUrl)}`, '_blank');
-    } else if (platform === 'twitter') {
-      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, '_blank');
-    } else if (platform === 'facebook') {
-      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`, '_blank');
-    } else if (platform === 'copy') {
-      navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2500);
-    }
-  };
-
   // Filtered Memories Calculation
   const filteredMemories = memories.filter((mem) => {
     // Search query
@@ -527,6 +444,35 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
 
   return (
     <section id="graduation-highlights" className="py-20 bg-slate-950 text-slate-100 relative z-10 overflow-hidden border-t border-b border-white/10 my-8">
+      <div className={selectedItem ? "hidden" : "block"}>
+      {/* ==========================================================
+          STATIC FLOATING BUTTONS (FIXED POSITION)
+          ========================================================== */}
+      {/* LEFT (fixed position): Always visible while scrolling. Fixed to top-left corner. Never disappear. */}
+      <div className="fixed top-20 left-4 sm:top-24 sm:left-6 z-40 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setIsUploadModalOpen(true)}
+          className="flex items-center gap-2 px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-[11px] sm:text-xs uppercase tracking-wider shadow-[0_10px_30px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40 group"
+        >
+          <UploadCloud className="w-4 h-4 shrink-0 group-hover:animate-bounce" />
+          <span>Upload Your Graduation Memory</span>
+        </button>
+      </div>
+
+      {/* RIGHT (fixed position): Only visible while upload overlay is open. Fixed to top-right corner. */}
+      {isUploadModalOpen && (
+        <div className="fixed top-20 right-4 sm:top-24 sm:right-6 z-[9999999] pointer-events-auto">
+          <button
+            type="button"
+            onClick={closeAndResetModal}
+            className="flex items-center gap-2 px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-slate-900/95 hover:bg-red-600 text-white font-black text-[11px] sm:text-xs uppercase tracking-wider shadow-[0_10px_30px_rgba(0,0,0,0.8)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/20 group"
+          >
+            <ArrowLeft className="w-4 h-4 shrink-0 group-hover:-translate-x-1 transition-transform" />
+            <span>Back to Gallery</span>
+          </button>
+        </div>
+      )}
       
       {/* Toast Notification for Submission Success */}
       {uploadSuccessToast && (
@@ -1069,192 +1015,17 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
           </div>
         </div>
       )}
+      </div>
 
       {/* ==========================================================
-          FULLSCREEN MEDIA VIEWER MODAL
+          FACEBOOK & TIKTOK REELS STYLE MEDIA VIEWER
           ========================================================== */}
       {selectedItem && (
-        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex flex-col p-4 sm:p-8 overflow-y-auto animate-in fade-in duration-200">
-          <div className="max-w-5xl mx-auto w-full flex-1 flex flex-col my-auto space-y-6">
-            
-            {/* Modal Top Header Bar */}
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  {selectedItem.memoryType}
-                </span>
-                <span className="text-xs font-mono text-slate-400">Class of {selectedItem.graduationYear}</span>
-              </div>
-
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Main Stage Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              
-              {/* Media Display Area */}
-              <div className="lg:col-span-7 bg-black rounded-3xl overflow-hidden border border-white/10 shadow-2xl p-2 flex items-center justify-center max-h-[65vh]">
-                {selectedItem.mediaType === 'video' ? (
-                  <video
-                    src={selectedItem.mediaUrl}
-                    controls
-                    autoPlay
-                    playsInline
-                    className="w-full h-full max-h-[60vh] object-contain rounded-2xl"
-                  />
-                ) : (
-                  <img
-                    src={selectedItem.mediaUrl}
-                    alt={selectedItem.caption}
-                    className="w-full h-full max-h-[60vh] object-contain rounded-2xl"
-                    referrerPolicy="no-referrer"
-                  />
-                )}
-              </div>
-
-              {/* Right Details, Actions & Comments */}
-              <div className="lg:col-span-5 space-y-6 text-left flex flex-col justify-between">
-                
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-white leading-snug">
-                      "{selectedItem.caption}"
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-2 flex items-center gap-2">
-                      <span>Shared by</span>
-                      <span className="font-bold text-amber-400">{selectedItem.uploaderName || selectedItem.uploadedByType}</span>
-                    </p>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="flex items-center gap-3 pt-3 border-t border-white/10">
-                    
-                    {/* Like Button */}
-                    <button
-                      onClick={handleToggleLike}
-                      className={`flex-1 py-3 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer border ${
-                        hasLiked 
-                          ? 'bg-pink-600/20 text-pink-300 border-pink-500/40 shadow-lg' 
-                          : 'bg-white/5 hover:bg-white/10 text-white border-white/10'
-                      }`}
-                    >
-                      <Heart className={`w-4 h-4 ${hasLiked ? 'fill-current text-pink-400' : ''}`} />
-                      <span>{currentLikes} Likes</span>
-                    </button>
-
-                    {/* Direct Download Button */}
-                    <a
-                      href={selectedItem.mediaUrl}
-                      download={`wisdom_link_graduation_${selectedItem.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-3 rounded-xl bg-white/5 hover:bg-white/10 text-white border border-white/10 transition-colors cursor-pointer"
-                      title="Download Original Quality Media"
-                    >
-                      <Download className="w-4 h-4" />
-                    </a>
-
-                  </div>
-
-                  {/* Social Share Buttons */}
-                  <div className="space-y-2 pt-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block">Share Memory</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleShare('whatsapp')}
-                        className="p-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 text-xs font-semibold flex-1 transition-all cursor-pointer"
-                      >
-                        WhatsApp
-                      </button>
-                      <button
-                        onClick={() => handleShare('twitter')}
-                        className="p-2.5 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white border border-sky-500/30 text-xs font-semibold flex-1 transition-all cursor-pointer"
-                      >
-                        Twitter/X
-                      </button>
-                      <button
-                        onClick={() => handleShare('copy')}
-                        className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedLink ? 'Copied' : 'Link'}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Comments Section */}
-                <div className="space-y-4 pt-4 border-t border-white/10">
-                  <h4 className="text-xs font-extrabold uppercase tracking-widest text-slate-300 flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-indigo-400" />
-                    <span>Memory Comments ({activeComments.length})</span>
-                  </h4>
-
-                  {commentSuccessNotice && (
-                    <div className="p-2.5 bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <span>Comment submitted for administrator review!</span>
-                    </div>
-                  )}
-
-                  {/* Comment List */}
-                  <div className="max-h-40 overflow-y-auto space-y-2 pr-2">
-                    {activeComments.length === 0 ? (
-                      <p className="text-xs text-slate-500 italic">No comments yet. Leave a warm note!</p>
-                    ) : (
-                      activeComments.map(c => (
-                        <div key={c.id} className="p-3 bg-slate-900 rounded-xl border border-white/5 text-xs space-y-1">
-                          <div className="flex items-center justify-between text-slate-400 text-[10px]">
-                            <span className="font-bold text-amber-300">{c.authorName}</span>
-                            <span>{new Date(c.createdAt).toLocaleDateString()}</span>
-                          </div>
-                          <p className="text-slate-200">{c.text}</p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Add Comment Form */}
-                  <form onSubmit={handlePostComment} className="space-y-2">
-                    <input
-                      type="text"
-                      value={newCommentName}
-                      onChange={(e) => setNewCommentName(e.target.value)}
-                      placeholder="Your Name (Optional)"
-                      className="w-full p-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none"
-                    />
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        required
-                        value={newCommentText}
-                        onChange={(e) => setNewCommentText(e.target.value)}
-                        placeholder="Write a congratulatory message..."
-                        className="flex-1 p-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none"
-                      />
-                      <button
-                        type="submit"
-                        disabled={commentSubmitting}
-                        className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 disabled:opacity-50"
-                      >
-                        {commentSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Send'}
-                      </button>
-                    </div>
-                  </form>
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-        </div>
+        <GraduationReelsViewer
+          items={filteredMemories}
+          initialItem={selectedItem}
+          onClose={() => setSelectedItem(null)}
+        />
       )}
 
     </section>

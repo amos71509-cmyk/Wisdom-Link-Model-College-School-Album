@@ -440,7 +440,7 @@ export default function Hero({ customMemories = [] }: HeroProps) {
           {/* Epic Main Header */}
           <div className="space-y-4">
             <motion.h1 
-              className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-white tracking-tight leading-[1.08] font-display"
+              className="text-4xl sm:text-5xl md:text-[56px] font-bold text-white tracking-tight leading-[1.1] font-poppins"
               initial={{ opacity: 0, y: 25 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 1, delay: 0.2 }}
@@ -455,7 +455,7 @@ export default function Hero({ customMemories = [] }: HeroProps) {
             </motion.h1>
 
             <motion.p 
-              className="text-sm sm:text-base text-gray-300 leading-relaxed font-normal max-w-xl"
+              className="text-base sm:text-lg md:text-[20px] text-gray-300 leading-relaxed font-normal max-w-2xl font-sans"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 1, delay: 0.4 }}

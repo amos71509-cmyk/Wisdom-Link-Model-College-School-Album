@@ -1,9 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-display: "Poppins", "Space Grotesk", sans-serif;
+  --font-poppins: "Poppins", sans-serif;
 }
 
 /* Frosted Glass Theme Classes */
@@ -75,3 +76,72 @@
 .animate-pulse-slow {
   animation: pulseSlow 15s ease-in-out infinite;
 }
+
+/* Sideways Ticker Animation (Left to Right) */
+@keyframes marqueeLtr {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100vw); }
+}
+
+.animate-marquee-ltr {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marqueeLtr 14s linear infinite;
+  will-change: transform;
+}
+
+/* Typography Scale & Standardized Hierarchy */
+.hero-heading {
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+  font-size: 56px;
+  line-height: 1.1;
+}
+
+.hero-description {
+  font-family: "Inter", sans-serif;
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.6;
+}
+
+.section-heading {
+  font-family: "Poppins", sans-serif;
+  font-weight: 600;
+  font-size: 36px;
+  line-height: 1.25;
+}
+
+.card-title {
+  font-family: "Poppins", sans-serif;
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.35;
+}
+
+.body-text {
+  font-family: "Inter", sans-serif;
+  font-weight: 400;
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.btn-text {
+  font-family: "Inter", sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.caption-text {
+  font-family: "Inter", sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+}
+
+/* When dedicated Reels Viewer is active, hide sticky headers and banners so it is 100% standalone */
+body.reels-viewer-active .sticky,
+body.reels-viewer-active #realtime-celebration-banner,
+body.reels-viewer-active #cleanup-active-banner {
+  display: none !important;
+}
+

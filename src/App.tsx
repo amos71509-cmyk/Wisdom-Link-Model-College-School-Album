@@ -25,7 +25,8 @@ import { UploadProgressModal } from './components/UploadProgressModal';
 import { SchoolPalette, Memory, ParentContribution, CustomSection } from './types';
 import { PALETTES, DEFAULT_PARENT_CONTRIBUTIONS, MEMORIES } from './data/schoolData';
 import { Sparkles, UserCheck, AlertCircle, Volume2, Star, Gift, Bell, Shield, X } from 'lucide-react';
-import { seedDatabaseIfEmpty, subscribeActiveBannerEvent, subscribePhotos, subscribeVideos, subscribeCustomSections, subscribeCommunityMemories } from './services/firebaseService';
+import { seedDatabaseIfEmpty, subscribeActiveBannerEvent, subscribePhotos, subscribeVideos, subscribeCustomSections, subscribeCommunityMemories, purgeRejectedAndDeletedFromFirestore } from './services/firebaseService';
+import { auth } from './firebase';
 import { getCloudinaryThumbnail } from './utils/videoUtils';
 
 export default function App() {
@@ -267,6 +268,37 @@ export default function App() {
     };
   }, []);
 
+  // Ticker animation state: only pop up every 20 seconds
+  const [isTickerVisible, setIsTickerVisible] = useState(true);
+
+  useEffect(() => {
+    if (!activeBanner?.active) return;
+    let timer: NodeJS.Timeout;
+    if (isTickerVisible) {
+      // Stay visible for 14 seconds while moving across from left to right
+      timer = setTimeout(() => {
+        setIsTickerVisible(false);
+      }, 14000);
+    } else {
+      // Pop up every 20 seconds
+      timer = setTimeout(() => {
+        setIsTickerVisible(true);
+      }, 20000);
+    }
+    return () => clearTimeout(timer);
+  }, [isTickerVisible, activeBanner?.active]);
+
+  // Purge any rejected or deleted records automatically when admin is signed in
+  useEffect(() => {
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      if (user) {
+        purgeRejectedAndDeletedFromFirestore();
+      }
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+
 
   // Color modification handler (Preset click)
   const handleChangePalette = (palette: SchoolPalette) => {
@@ -356,14 +388,19 @@ export default function App() {
           </div>
         )}
 
-        {/* Dynamic Celebration Ticker/Announcement Banner */}
-        {activeBanner && activeBanner.active && (
+        {/* Dynamic Celebration Ticker/Announcement Banner - Pops up every 20s and moves sideways from left to right */}
+        {activeBanner && activeBanner.active && isTickerVisible && (
           <div 
             id="realtime-celebration-banner"
-            className="bg-gradient-to-r from-[var(--primary)] to-[var(--accent)] text-white text-xs sm:text-sm py-2.5 px-4 flex items-center justify-center gap-2.5 relative z-50 border-b border-white/10 shadow-md font-semibold text-center animate-in fade-in slide-in-from-top duration-300"
+            className="bg-gradient-to-r from-[var(--primary)] via-[var(--primary-dark)] to-[var(--accent)] text-white py-3 relative z-50 border-b border-white/10 shadow-lg animate-in fade-in slide-in-from-top duration-500 overflow-hidden w-full flex items-center"
           >
-            <Volume2 className="w-4 h-4 animate-bounce shrink-0 text-white/95" />
-            <span>{activeBanner.text}</span>
+            <div className="w-full overflow-hidden whitespace-nowrap flex items-center">
+              <div className="animate-marquee-ltr flex items-center gap-4 font-poppins font-bold text-sm sm:text-base tracking-wide px-4">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/20 text-white shadow-sm shrink-0 animate-bounce">🎉</span>
+                <span>{activeBanner.text}</span>
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/20 text-white shadow-sm shrink-0 animate-bounce">🎓</span>
+              </div>
+            </div>
           </div>
         )}
 
