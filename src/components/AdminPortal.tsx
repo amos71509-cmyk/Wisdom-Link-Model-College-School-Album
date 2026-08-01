@@ -57,6 +57,7 @@ import {
 import GraduationManagementTab from './GraduationManagementTab';
 import AdminGraduationCeremonyCMS from './AdminGraduationCeremonyCMS';
 import { FEATURED_EVENTS } from '../data/schoolData';
+import { MAJOR_SCHOOL_EVENTS } from '../data/schoolEventsData';
 
 interface AdminPortalProps {
   isOpen: boolean;
@@ -241,6 +242,7 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
   const [commFilterEvent, setCommFilterEvent] = useState<string>('All');
   const [commFilterMediaType, setCommFilterMediaType] = useState<string>('All');
   const [commSearchQuery, setCommSearchQuery] = useState<string>('');
+  const [selectedCmsEventTitle, setSelectedCmsEventTitle] = useState<string>('Graduation Ceremony');
 
   // Active editing community memory
   const [editingCommMemory, setEditingCommMemory] = useState<CommunityMemory | null>(null);
@@ -3493,7 +3495,7 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                       { id: 'events', label: 'Featured Events', icon: Calendar },
                       { id: 'footer', label: 'Footer Settings', icon: Info },
                       { id: 'branding', label: 'Identity & Banner', icon: Image },
-                      { id: 'graduation_ceremony', label: 'Graduation Ceremony', icon: Camera },
+                      { id: 'graduation_ceremony', label: 'Event Galleries CMS', icon: Camera },
                       { id: 'graduates', label: 'Graduates of the Year', icon: Award },
                     ].map((sub) => {
                       const isSubActive = cmsSubTab === sub.id;
@@ -4868,10 +4870,35 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                   )}
 
                   {/* ----------------------------------------------------
-                      CMS SUB-TAB: GRADUATION CEREMONY
+                      CMS SUB-TAB: SCHOOL EVENT GALLERIES CMS
                       ---------------------------------------------------- */}
                   {cmsSubTab === 'graduation_ceremony' && (
-                    <AdminGraduationCeremonyCMS triggerFeedback={triggerFeedback} />
+                    <div className="space-y-6">
+                      <div className="bg-slate-950 p-5 rounded-2xl border border-amber-400/20 flex flex-col sm:flex-row items-center justify-between gap-4 text-left shadow-lg">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-amber-400" />
+                            <span>Select Event Gallery to Manage:</span>
+                          </label>
+                          <p className="text-xs text-slate-400">
+                            Select any major school event to moderate submissions, manage public photos/videos, or edit thumbnails:
+                          </p>
+                        </div>
+                        <select
+                          value={selectedCmsEventTitle}
+                          onChange={(e) => setSelectedCmsEventTitle(e.target.value)}
+                          className="w-full sm:w-auto px-4 py-2.5 bg-slate-900 border border-amber-400/40 rounded-xl text-xs font-black text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400/50 cursor-pointer shadow-inner"
+                        >
+                          {MAJOR_SCHOOL_EVENTS.map(evt => (
+                            <option key={evt.id} value={evt.title}>{evt.title}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <AdminGraduationCeremonyCMS 
+                        triggerFeedback={triggerFeedback} 
+                        eventTitle={selectedCmsEventTitle} 
+                      />
+                    </div>
                   )}
 
                   {/* ----------------------------------------------------

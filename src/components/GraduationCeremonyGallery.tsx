@@ -7,8 +7,8 @@ import {
 } from 'lucide-react';
 import { GraduationMemory } from '../types';
 import { 
-  subscribeApprovedGraduationMemories, 
-  submitGraduationCeremonyMemory
+  subscribeApprovedEventMemories, 
+  submitEventMemory
 } from '../services/firebaseService';
 import GraduationReelsViewer from './GraduationReelsViewer';
 import { compressImage } from '../lib/imageCompressor';
@@ -153,12 +153,20 @@ const FALLBACK_CEREMONY_MEMORIES: GraduationMemory[] = [
   }
 ];
 
-interface GraduationCeremonyGalleryProps {
+export interface GraduationCeremonyGalleryProps {
   onClose?: () => void;
+  eventTitle?: string;
+  eventCategory?: string;
+  eventDescription?: string;
 }
 
-export default function GraduationCeremonyGallery({ onClose }: GraduationCeremonyGalleryProps) {
-  const [memories, setMemories] = useState<GraduationMemory[]>(FALLBACK_CEREMONY_MEMORIES);
+export default function GraduationCeremonyGallery({ 
+  onClose,
+  eventTitle = 'Graduation Ceremony',
+  eventCategory = 'Ceremony',
+  eventDescription = 'Explore stage speeches, award honorings, family embraces, choral performances, and celebration highlights.'
+}: GraduationCeremonyGalleryProps) {
+  const [memories, setMemories] = useState<GraduationMemory[]>(eventTitle === 'Graduation Ceremony' ? FALLBACK_CEREMONY_MEMORIES : []);
   const [loading, setLoading] = useState(true);
 
   // Filter & Search states
@@ -250,18 +258,21 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     };
   }, [isUploadModalOpen, selectedItem]);
 
-  // Real-time Firestore subscription to Approved Graduation Memories
+  // Real-time Firestore subscription to Approved Event Memories
   useEffect(() => {
-    const unsub = subscribeApprovedGraduationMemories((liveMemories) => {
+    setLoading(true);
+    const unsub = subscribeApprovedEventMemories(eventTitle, (liveMemories) => {
       if (liveMemories && liveMemories.length > 0) {
         setMemories(liveMemories);
-      } else {
+      } else if (eventTitle === 'Graduation Ceremony') {
         setMemories(FALLBACK_CEREMONY_MEMORIES);
+      } else {
+        setMemories([]);
       }
       setLoading(false);
     });
     return () => unsub();
-  }, []);
+  }, [eventTitle]);
 
   // File Selector & Drag-and-Drop Handler (Supports up to 20 images & 5 videos concurrently)
   const handleFilesAdded = (filesArray: File[]) => {
@@ -365,9 +376,9 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
       }
 
       // Immediately write metadata for this specific file upon Cloudinary upload success
-      const docId = await submitGraduationCeremonyMemory({
+      const docId = await submitEventMemory(eventTitle, {
         title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
-        eventName: 'Graduation Ceremony ' + uploadYear,
+        eventName: `${eventTitle} ${uploadYear}`,
         graduationYear: uploadYear,
         uploadedByType: uploadRole as any,
         memoryType: uploadType,
@@ -463,9 +474,9 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
           }
 
           // Save each successful image to Firestore immediately after Cloudinary returns success
-          const docId = await submitGraduationCeremonyMemory({
+          const docId = await submitEventMemory(eventTitle, {
             title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
-            eventName: 'Graduation Ceremony ' + uploadYear,
+            eventName: `${eventTitle} ${uploadYear}`,
             graduationYear: uploadYear,
             uploadedByType: uploadRole as any,
             memoryType: uploadType,
@@ -601,7 +612,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
           ========================================================== */}
       {!isUploadModalOpen && !selectedItem && (
         <>
-          {/* TOP-LEFT: Upload Your Graduation Memory Button */}
+          {/* TOP-LEFT: Upload Your Event Memory Button */}
           <button
             type="button"
             onClick={openModal}
@@ -614,8 +625,8 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
             className="h-[38px] sm:h-[42px] px-[14px] py-[10px] rounded-[18px] bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-[13px] sm:text-[14px] uppercase tracking-wider shadow-[0_8px_25px_rgba(245,158,11,0.4)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40 flex items-center gap-2 shrink-0 group backdrop-blur-md"
           >
             <UploadCloud className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px] shrink-0 group-hover:animate-bounce" />
-            <span className="hidden sm:inline">Upload Your Graduation Memory</span>
-            <span className="sm:hidden">Upload Memory</span>
+            <span className="hidden sm:inline">Upload Memory</span>
+            <span className="sm:hidden">Upload</span>
           </button>
 
           {/* TOP-RIGHT: Back to Major Events Button */}
@@ -661,13 +672,13 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
           <div className="max-w-3xl">
             <span className="text-xs font-extrabold uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>Graduation Memories & Highlights</span>
+              <span>{eventCategory} Archives & Highlights</span>
             </span>
             <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight font-display">
-              Graduation Ceremony Gallery
+              {eventTitle} Gallery
             </h2>
             <p className="mt-3 text-sm sm:text-base text-slate-300 leading-relaxed font-normal">
-              Explore stage speeches, award honorings, family embraces, choral performances, and celebration highlights.
+              {eventDescription}
             </p>
           </div>
 
@@ -677,7 +688,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
             className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest shadow-2xl hover:scale-103 hover:shadow-amber-500/25 active:scale-98 transition-all cursor-pointer border border-amber-300/30 shrink-0"
           >
             <UploadCloud className="w-5 h-5 shrink-0" />
-            <span>Upload Your Graduation Memory</span>
+            <span>Upload Memory</span>
           </button>
         </div>
 
@@ -774,18 +785,24 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
 
         {/* Gallery Grid Container */}
         {filteredMemories.length === 0 ? (
-          <div className="p-16 text-center bg-slate-900/50 border border-white/5 rounded-3xl space-y-4">
-            <Camera className="w-12 h-12 text-slate-600 mx-auto" />
-            <h3 className="text-base font-bold text-white">No Ceremony Memories Found</h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              Be the first to share photos or video clips from this graduation milestone!
-            </p>
+          <div className="py-20 px-6 text-center flex flex-col items-center justify-center space-y-5 bg-slate-900/60 border border-white/10 rounded-3xl backdrop-blur-md my-8 shadow-2xl max-w-2xl mx-auto">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-amber-500/20 to-indigo-500/20 border border-amber-400/30 flex items-center justify-center text-amber-400 shadow-inner">
+              <Camera className="w-10 h-10 text-amber-300 animate-pulse" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                No memories have been uploaded for this event yet.
+              </h3>
+              <p className="text-sm text-slate-300 leading-relaxed font-medium">
+                Be the first to preserve this special moment. Upload photos or video highlights from {eventTitle}.
+              </p>
+            </div>
             <button
               onClick={() => setIsUploadModalOpen(true)}
-              className="px-6 py-3 rounded-xl bg-amber-400 text-slate-950 text-xs font-bold uppercase tracking-wider hover:bg-amber-300 transition-all cursor-pointer inline-flex items-center gap-2"
+              className="px-6 py-3.5 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black rounded-2xl text-xs uppercase tracking-widest shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 cursor-pointer border border-amber-300/40"
             >
               <UploadCloud className="w-4 h-4" />
-              <span>Upload Memory Now</span>
+              <span>Upload First Memory</span>
             </button>
           </div>
         ) : (
@@ -915,7 +932,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
               UPLOAD YOUR MEMORY
             </h3>
             <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
-              Share your photos and videos from graduation ceremonies to be permanently preserved in the school archive. Submissions go directly to the administrator pending queue for review and approval.
+              Share your photos and videos from {eventTitle} to be permanently preserved in the school archive. Submissions go directly to the administrator pending queue for review and approval.
             </p>
             <div className="pt-2">
               <button
@@ -923,7 +940,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                 className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest shadow-2xl hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40"
               >
                 <Camera className="w-4 h-4 shrink-0" />
-                <span>Upload Your Graduation Memory</span>
+                <span>Upload Memory for {eventTitle}</span>
               </button>
             </div>
           </div>
@@ -971,7 +988,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
             <div className="text-center min-w-0 px-2">
               <h2 className="text-xs sm:text-base font-black text-white flex items-center justify-center gap-2 truncate font-display">
                 <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" />
-                <span className="truncate">Upload Graduation Memory</span>
+                <span className="truncate">Upload {eventTitle} Memory</span>
               </h2>
             </div>
 
@@ -1298,8 +1315,8 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                     <UploadCloud className="w-5 h-5" />
                     <span>
                       {selectedFiles.length > 1
-                        ? `Submit ${selectedFiles.length} Graduation Memories`
-                        : 'Submit Graduation Memory'}
+                        ? `Submit ${selectedFiles.length} Memories for ${eventTitle}`
+                        : `Submit Memory for ${eventTitle}`}
                     </span>
                   </>
                 )}
@@ -1319,6 +1336,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
         <GraduationReelsViewer
           items={filteredMemories}
           initialItem={selectedItem}
+          eventTitle={eventTitle}
           onClose={() => setSelectedItem(null)}
         />
       )}

@@ -1119,19 +1119,36 @@ export async function saveGraduationSettings(settings: GraduationSettings): Prom
 }
 
 // ==========================================================
-// GRADUATION CEREMONY GALLERY SERVICE
+// MAJOR EVENT GALLERIES SERVICE (DYNAMIC FIRESTORE COLLECTIONS)
 // ==========================================================
 
-export async function submitGraduationCeremonyMemory(memoryData: Partial<GraduationMemory>): Promise<string> {
-  const id = memoryData.id || `grad-ceremony-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-  const fullPath = `graduation_memories/${id}`;
+export function getEventCollectionName(eventTitle?: string): string {
+  if (!eventTitle || eventTitle.toLowerCase().includes('graduation ceremony') || eventTitle.toLowerCase() === 'graduation') {
+    return "graduation_memories";
+  }
+  const slug = eventTitle.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^_+|_+$/g, '');
+  return `event_memories_${slug}`;
+}
+
+export function getEventCommentsCollectionName(eventTitle?: string): string {
+  if (!eventTitle || eventTitle.toLowerCase().includes('graduation ceremony') || eventTitle.toLowerCase() === 'graduation') {
+    return "graduation_memory_comments";
+  }
+  const slug = eventTitle.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^_+|_+$/g, '');
+  return `event_comments_${slug}`;
+}
+
+export async function submitEventMemory(eventTitle: string, memoryData: Partial<GraduationMemory>): Promise<string> {
+  const collectionName = getEventCollectionName(eventTitle);
+  const id = memoryData.id || `event-mem-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const fullPath = `${collectionName}/${id}`;
   try {
     const now = new Date().toISOString();
-    const docRef = doc(db, "graduation_memories", id);
+    const docRef = doc(db, collectionName, id);
     const fullMemory: Record<string, any> = {
       id,
-      title: memoryData.title || memoryData.caption || 'Graduation Memory',
-      eventName: memoryData.eventName || 'Graduation Ceremony',
+      title: memoryData.title || memoryData.caption || `${eventTitle} Memory`,
+      eventName: eventTitle || memoryData.eventName || 'School Event',
       graduationYear: memoryData.graduationYear || new Date().getFullYear().toString(),
       uploadedByType: memoryData.uploadedByType || 'Visitor',
       memoryType: memoryData.memoryType || 'General Memory',
@@ -1153,7 +1170,7 @@ export async function submitGraduationCeremonyMemory(memoryData: Partial<Graduat
     if (memoryData.rejectedAt) fullMemory.rejectedAt = memoryData.rejectedAt;
     if (memoryData.rejectionReason) fullMemory.rejectionReason = memoryData.rejectionReason;
 
-    console.log(`[FIRESTORE WRITE ATTEMPT] Operation: setDoc, Target Document Path: ${fullPath}, Collection: graduation_memories, DocID: ${id}, Payload mediaUrl size: ${fullMemory.mediaUrl?.length || 0} chars`);
+    console.log(`[FIRESTORE WRITE ATTEMPT] Operation: setDoc, Target Path: ${fullPath}, Collection: ${collectionName}, DocID: ${id}`);
     await setDoc(docRef, sanitizeData(fullMemory));
     console.log(`[FIRESTORE WRITE SUCCESS] Path: ${fullPath}, Status: ${fullMemory.status}`);
     return id;
@@ -1164,8 +1181,13 @@ export async function submitGraduationCeremonyMemory(memoryData: Partial<Graduat
   }
 }
 
-export function subscribeApprovedGraduationMemories(callback: (memories: GraduationMemory[]) => void) {
-  const colRef = collection(db, "graduation_memories");
+export async function submitGraduationCeremonyMemory(memoryData: Partial<GraduationMemory>): Promise<string> {
+  return submitEventMemory('Graduation Ceremony', memoryData);
+}
+
+export function subscribeApprovedEventMemories(eventTitle: string, callback: (memories: GraduationMemory[]) => void) {
+  const collectionName = getEventCollectionName(eventTitle);
+  const colRef = collection(db, collectionName);
   const q = query(colRef, where("status", "==", "Approved"));
   return onSnapshot(q, (snapshot) => {
     const list: GraduationMemory[] = [];
@@ -1175,29 +1197,38 @@ export function subscribeApprovedGraduationMemories(callback: (memories: Graduat
         list.push({ id: doc.id, ...data } as GraduationMemory);
       }
     });
-    // Sort descending by createdAt
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    console.log(`[FIRESTORE READ APPROVED] Collection: graduation_memories, Count: ${list.length}`);
+    console.log(`[FIRESTORE READ APPROVED] Collection: ${collectionName}, Count: ${list.length}`);
     callback(list);
-  }, (err) => handleFirestoreError(err, OperationType.GET, "graduation_memories_approved"));
+  }, (err) => handleFirestoreError(err, OperationType.GET, `${collectionName}_approved`));
 }
 
-export function subscribeAllGraduationMemories(callback: (memories: GraduationMemory[]) => void) {
-  const colRef = collection(db, "graduation_memories");
+export function subscribeApprovedGraduationMemories(callback: (memories: GraduationMemory[]) => void) {
+  return subscribeApprovedEventMemories('Graduation Ceremony', callback);
+}
+
+export function subscribeAllEventMemories(eventTitle: string, callback: (memories: GraduationMemory[]) => void) {
+  const collectionName = getEventCollectionName(eventTitle);
+  const colRef = collection(db, collectionName);
   return onSnapshot(colRef, (snapshot) => {
     const list: GraduationMemory[] = [];
     snapshot.forEach((doc) => {
       list.push({ id: doc.id, ...doc.data() } as GraduationMemory);
     });
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    console.log(`[FIRESTORE READ ALL] Collection: graduation_memories, Count: ${list.length}`);
+    console.log(`[FIRESTORE READ ALL] Collection: ${collectionName}, Count: ${list.length}`);
     callback(list);
-  }, (err) => handleFirestoreError(err, OperationType.GET, "graduation_memories_all"));
+  }, (err) => handleFirestoreError(err, OperationType.GET, `${collectionName}_all`));
 }
 
-export async function approveGraduationMemory(id: string, adminName: string): Promise<void> {
+export function subscribeAllGraduationMemories(callback: (memories: GraduationMemory[]) => void) {
+  return subscribeAllEventMemories('Graduation Ceremony', callback);
+}
+
+export async function approveEventMemory(eventTitle: string, id: string, adminName: string): Promise<void> {
+  const collectionName = getEventCollectionName(eventTitle);
   try {
-    const docRef = doc(db, "graduation_memories", id);
+    const docRef = doc(db, collectionName, id);
     const snap = await getDoc(docRef);
     let mediaUrl = "";
     let thumbnailUrl = "";
@@ -1209,13 +1240,13 @@ export async function approveGraduationMemory(id: string, adminName: string): Pr
       thumbnailUrl = mem.thumbnailUrl || "";
 
       if (mediaUrl && typeof mediaUrl === 'string' && mediaUrl.startsWith('data:image/')) {
-        const file = base64ToFile(mediaUrl, `approved_grad_mem_${id}.jpg`);
+        const file = base64ToFile(mediaUrl, `approved_event_mem_${id}.jpg`);
         const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
         mediaUrl = res.secure_url || res.url;
         updated = true;
       }
       if (thumbnailUrl && typeof thumbnailUrl === 'string' && thumbnailUrl.startsWith('data:image/')) {
-        const file = base64ToFile(thumbnailUrl, `approved_grad_thumb_${id}.jpg`);
+        const file = base64ToFile(thumbnailUrl, `approved_event_thumb_${id}.jpg`);
         const res = await uploadFileToCloudinary(file, { folder: 'scholars_class_2026', forceUpload: true });
         thumbnailUrl = res.secure_url || res.url;
         updated = true;
@@ -1234,16 +1265,43 @@ export async function approveGraduationMemory(id: string, adminName: string): Pr
       updatePayload.isStaged = false;
     }
     await updateDoc(docRef, updatePayload);
-    console.log(`[FIRESTORE WRITE] Collection: graduation_memories, DocID: ${id}, Approved by ${adminName}`);
+    console.log(`[FIRESTORE WRITE] Collection: ${collectionName}, DocID: ${id}, Approved by ${adminName}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `graduation_memories/${id}`);
+    handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`);
+    throw err;
+  }
+}
+
+export async function approveGraduationMemory(id: string, adminName: string): Promise<void> {
+  return approveEventMemory('Graduation Ceremony', id, adminName);
+}
+
+export async function rejectEventMemory(eventTitle: string, id: string, adminName: string, reason?: string): Promise<void> {
+  const collectionName = getEventCollectionName(eventTitle);
+  try {
+    const docRef = doc(db, collectionName, id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
+    }
+    await scrubAssociatedComments(id);
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Rejected and deleted event memory DocID: ${id} from ${collectionName}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${collectionName}/${id}`);
     throw err;
   }
 }
 
 export async function rejectGraduationMemory(id: string, adminName: string, reason?: string): Promise<void> {
+  return rejectEventMemory('Graduation Ceremony', id, adminName, reason);
+}
+
+export async function deleteEventMemory(eventTitle: string, id: string): Promise<void> {
+  const collectionName = getEventCollectionName(eventTitle);
   try {
-    const docRef = doc(db, "graduation_memories", id);
+    const docRef = doc(db, collectionName, id);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data();
@@ -1251,48 +1309,41 @@ export async function rejectGraduationMemory(id: string, adminName: string, reas
     }
     await scrubAssociatedComments(id);
     await deleteDoc(docRef);
-    console.log(`[FIRESTORE DELETE] Rejected and deleted graduation memory DocID: ${id}`);
+    console.log(`[FIRESTORE DELETE] Collection: ${collectionName}, DocID: ${id}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `graduation_memories/${id}`);
+    handleFirestoreError(err, OperationType.DELETE, `${collectionName}/${id}`);
     throw err;
   }
 }
 
 export async function deleteGraduationMemory(id: string): Promise<void> {
+  return deleteEventMemory('Graduation Ceremony', id);
+}
+
+export async function updateEventMemoryThumbnail(eventTitle: string, id: string, thumbnailUrl: string): Promise<void> {
+  const collectionName = getEventCollectionName(eventTitle);
   try {
-    const docRef = doc(db, "graduation_memories", id);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      await scrubCloudinaryMedia([data.mediaUrl, data.thumbnailUrl, data.url]);
-    }
-    await scrubAssociatedComments(id);
-    await deleteDoc(docRef);
-    console.log(`[FIRESTORE DELETE] Collection: graduation_memories, DocID: ${id}`);
+    const docRef = doc(db, collectionName, id);
+    await updateDoc(docRef, {
+      thumbnailUrl,
+      updatedAt: new Date().toISOString()
+    });
+    console.log(`[FIRESTORE WRITE] Collection: ${collectionName}, DocID: ${id}, Updated Thumbnail`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `graduation_memories/${id}`);
+    handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`);
     throw err;
   }
 }
 
 export async function updateGraduationMemoryThumbnail(id: string, thumbnailUrl: string): Promise<void> {
-  try {
-    const docRef = doc(db, "graduation_memories", id);
-    await updateDoc(docRef, {
-      thumbnailUrl,
-      updatedAt: new Date().toISOString()
-    });
-    console.log(`[FIRESTORE WRITE] Collection: graduation_memories, DocID: ${id}, Updated Thumbnail`);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `graduation_memories/${id}`);
-    throw err;
-  }
+  return updateEventMemoryThumbnail('Graduation Ceremony', id, thumbnailUrl);
 }
 
-export async function addGraduationMemoryComment(commentData: Partial<GraduationMemoryComment>): Promise<string> {
+export async function addEventMemoryComment(eventTitle: string, commentData: Partial<GraduationMemoryComment>): Promise<string> {
+  const collectionName = getEventCommentsCollectionName(eventTitle);
   try {
     const id = `comment-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    const docRef = doc(db, "graduation_memory_comments", id);
+    const docRef = doc(db, collectionName, id);
     const comment: GraduationMemoryComment = {
       id,
       memoryId: commentData.memoryId || '',
@@ -1305,13 +1356,18 @@ export async function addGraduationMemoryComment(commentData: Partial<Graduation
     await setDoc(docRef, sanitizeData(comment));
     return id;
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'graduation_memory_comments');
+    handleFirestoreError(err, OperationType.WRITE, getEventCommentsCollectionName(eventTitle));
     throw err;
   }
 }
 
-export function subscribeGraduationMemoryComments(memoryId: string, callback: (comments: GraduationMemoryComment[]) => void) {
-  const colRef = collection(db, "graduation_memory_comments");
+export async function addGraduationMemoryComment(commentData: Partial<GraduationMemoryComment>): Promise<string> {
+  return addEventMemoryComment('Graduation Ceremony', commentData);
+}
+
+export function subscribeEventMemoryComments(eventTitle: string, memoryId: string, callback: (comments: GraduationMemoryComment[]) => void) {
+  const collectionName = getEventCommentsCollectionName(eventTitle);
+  const colRef = collection(db, collectionName);
   const q = query(colRef, where("memoryId", "==", memoryId), where("status", "==", "Approved"));
   return onSnapshot(q, (snapshot) => {
     const list: GraduationMemoryComment[] = [];
@@ -1320,11 +1376,16 @@ export function subscribeGraduationMemoryComments(memoryId: string, callback: (c
     });
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     callback(list);
-  }, (err) => handleFirestoreError(err, OperationType.GET, "graduation_memory_comments"));
+  }, (err) => handleFirestoreError(err, OperationType.GET, collectionName));
 }
 
-export function subscribeAllGraduationComments(callback: (comments: GraduationMemoryComment[]) => void) {
-  const colRef = collection(db, "graduation_memory_comments");
+export function subscribeGraduationMemoryComments(memoryId: string, callback: (comments: GraduationMemoryComment[]) => void) {
+  return subscribeEventMemoryComments('Graduation Ceremony', memoryId, callback);
+}
+
+export function subscribeAllEventComments(eventTitle: string, callback: (comments: GraduationMemoryComment[]) => void) {
+  const collectionName = getEventCommentsCollectionName(eventTitle);
+  const colRef = collection(db, collectionName);
   return onSnapshot(colRef, (snapshot) => {
     const list: GraduationMemoryComment[] = [];
     snapshot.forEach((doc) => {
@@ -1332,31 +1393,47 @@ export function subscribeAllGraduationComments(callback: (comments: GraduationMe
     });
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     callback(list);
-  }, (err) => handleFirestoreError(err, OperationType.GET, "graduation_memory_comments_all"));
+  }, (err) => handleFirestoreError(err, OperationType.GET, `${collectionName}_all`));
 }
 
-export async function approveGraduationComment(commentId: string, adminName: string): Promise<void> {
+export function subscribeAllGraduationComments(callback: (comments: GraduationMemoryComment[]) => void) {
+  return subscribeAllEventComments('Graduation Ceremony', callback);
+}
+
+export async function approveEventComment(eventTitle: string, commentId: string, adminName: string): Promise<void> {
+  const collectionName = getEventCommentsCollectionName(eventTitle);
   try {
-    const docRef = doc(db, "graduation_memory_comments", commentId);
+    const docRef = doc(db, collectionName, commentId);
     await updateDoc(docRef, {
       status: 'Approved',
       approvedBy: adminName || 'Admin',
       approvedAt: new Date().toISOString()
     });
+    console.log(`[FIRESTORE WRITE] Approved comment ${commentId} in ${collectionName}`);
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `graduation_memory_comments/${commentId}`);
+    handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${commentId}`);
+    throw err;
+  }
+}
+
+export async function approveGraduationComment(commentId: string, adminName: string): Promise<void> {
+  return approveEventComment('Graduation Ceremony', commentId, adminName);
+}
+
+export async function deleteEventComment(eventTitle: string, commentId: string): Promise<void> {
+  const collectionName = getEventCommentsCollectionName(eventTitle);
+  try {
+    const docRef = doc(db, collectionName, commentId);
+    await deleteDoc(docRef);
+    console.log(`[FIRESTORE DELETE] Deleted comment ${commentId} from ${collectionName}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${collectionName}/${commentId}`);
     throw err;
   }
 }
 
 export async function deleteGraduationComment(commentId: string): Promise<void> {
-  try {
-    const docRef = doc(db, "graduation_memory_comments", commentId);
-    await deleteDoc(docRef);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `graduation_memory_comments/${commentId}`);
-    throw err;
-  }
+  return deleteEventComment('Graduation Ceremony', commentId);
 }
 
 /**

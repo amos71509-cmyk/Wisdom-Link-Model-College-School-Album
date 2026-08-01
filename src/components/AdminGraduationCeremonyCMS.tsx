@@ -6,28 +6,32 @@ import {
 } from 'lucide-react';
 import { GraduationMemory, GraduationMemoryComment } from '../types';
 import { 
-  subscribeAllGraduationMemories, 
-  approveGraduationMemory, 
-  rejectGraduationMemory, 
-  deleteGraduationMemory, 
-  updateGraduationMemoryThumbnail,
-  submitGraduationCeremonyMemory,
-  subscribeAllGraduationComments,
-  approveGraduationComment,
-  deleteGraduationComment
+  subscribeAllEventMemories, 
+  approveEventMemory, 
+  rejectEventMemory, 
+  deleteEventMemory, 
+  updateEventMemoryThumbnail,
+  submitEventMemory,
+  subscribeAllEventComments,
+  approveEventComment,
+  deleteEventComment
 } from '../services/firebaseService';
 import { auth } from '../firebase';
 import { compressImage } from '../lib/imageCompressor';
 import { getCloudinaryThumbnail } from '../utils/videoUtils';
 import { uploadFileToCloudinary } from '../utils/uploadHelper';
 
-interface AdminGraduationCeremonyCMSProps {
+export interface AdminGraduationCeremonyCMSProps {
   triggerFeedback: (type: 'success' | 'error', message: string) => void;
+  eventTitle?: string;
 }
 
 type CMSSubTab = 'pending' | 'approved' | 'rejected' | 'upload' | 'comments';
 
-export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGraduationCeremonyCMSProps) {
+export default function AdminGraduationCeremonyCMS({ 
+  triggerFeedback,
+  eventTitle = 'Graduation Ceremony'
+}: AdminGraduationCeremonyCMSProps) {
   const [activeSubTab, setActiveSubTab] = useState<CMSSubTab>('pending');
   const [allMemories, setAllMemories] = useState<GraduationMemory[]>([]);
   const [allComments, setAllComments] = useState<GraduationMemoryComment[]>([]);
@@ -61,12 +65,12 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
   // Subscriptions
   useEffect(() => {
     setLoading(true);
-    const unsubMemories = subscribeAllGraduationMemories((memories) => {
+    const unsubMemories = subscribeAllEventMemories(eventTitle, (memories) => {
       setAllMemories(memories);
       setLoading(false);
     });
 
-    const unsubComments = subscribeAllGraduationComments((comments) => {
+    const unsubComments = subscribeAllEventComments(eventTitle, (comments) => {
       setAllComments(comments);
     });
 
@@ -74,7 +78,7 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
       unsubMemories();
       unsubComments();
     };
-  }, []);
+  }, [eventTitle]);
 
   const pendingMemories = allMemories.filter(m => m.status === 'Pending');
   const approvedMemories = allMemories.filter(m => m.status === 'Approved');
@@ -86,8 +90,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
   // Handle Approve Memory
   const handleApprove = async (id: string) => {
     try {
-      await approveGraduationMemory(id, adminEmail);
-      triggerFeedback('success', 'Ceremony memory approved! Now live on public gallery.');
+      await approveEventMemory(eventTitle, id, adminEmail);
+      triggerFeedback('success', `${eventTitle} memory approved! Now live on public gallery.`);
     } catch (err) {
       triggerFeedback('error', 'Failed to approve memory.');
     }
@@ -96,8 +100,8 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
   // Handle Reject Memory
   const handleReject = async (id: string) => {
     try {
-      await rejectGraduationMemory(id, adminEmail, 'Does not meet ceremony archiving criteria');
-      triggerFeedback('success', 'Ceremony memory rejected.');
+      await rejectEventMemory(eventTitle, id, adminEmail, 'Does not meet archiving criteria');
+      triggerFeedback('success', `${eventTitle} memory rejected.`);
     } catch (err) {
       triggerFeedback('error', 'Failed to reject memory.');
     }
@@ -105,10 +109,10 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
 
   // Handle Delete Memory
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Are you sure you want to permanently delete this ceremony memory?')) return;
+    if (!window.confirm('Are you sure you want to permanently delete this memory?')) return;
     try {
-      await deleteGraduationMemory(id);
-      triggerFeedback('success', 'Ceremony memory permanently deleted.');
+      await deleteEventMemory(eventTitle, id);
+      triggerFeedback('success', `${eventTitle} memory permanently deleted.`);
     } catch (err) {
       triggerFeedback('error', 'Failed to delete memory.');
     }
@@ -163,9 +167,9 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
         thumbnailUrl = getCloudinaryThumbnail(finalUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800';
       }
 
-      await submitGraduationCeremonyMemory({
+      await submitEventMemory(eventTitle, {
         title: adminUploadTitle.trim() || adminUploadCaption.substring(0, 30),
-        eventName: 'Graduation Ceremony ' + adminUploadYear,
+        eventName: `${eventTitle} ${adminUploadYear}`,
         graduationYear: adminUploadYear,
         uploadedByType: adminUploadRole,
         memoryType: adminUploadType,
@@ -208,14 +212,14 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
         const uploadResult = await uploadFileToCloudinary(thumbnailFile, { folder: 'scholars_class_2026' });
         if (uploadResult.url) finalThumb = uploadResult.url;
 
-        await updateGraduationMemoryThumbnail(editingThumbnailMemory.id, finalThumb);
+        await updateEventMemoryThumbnail(eventTitle, editingThumbnailMemory.id, finalThumb);
         triggerFeedback('success', 'Video thumbnail updated successfully!');
         setEditingThumbnailMemory(null);
         return;
       }
 
       if (finalThumb) {
-        await updateGraduationMemoryThumbnail(editingThumbnailMemory.id, finalThumb);
+        await updateEventMemoryThumbnail(eventTitle, editingThumbnailMemory.id, finalThumb);
         triggerFeedback('success', 'Video thumbnail updated successfully!');
         setEditingThumbnailMemory(null);
       } else {
@@ -252,10 +256,10 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
         <div>
           <h2 className="text-lg font-black text-white flex items-center gap-2">
             <Camera className="w-5 h-5 text-amber-400" />
-            <span>Graduation Ceremony Content Management</span>
+            <span>{eventTitle} Content Management</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Manage public graduation ceremony videos, photos, speeches, and choir performances. Moderate submissions, edit thumbnails, or upload official ceremony media.
+            Manage public {eventTitle.toLowerCase()} videos, photos, speeches, and choir performances. Moderate submissions, edit thumbnails, or upload official event media.
           </p>
         </div>
 
@@ -534,7 +538,7 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={async () => {
-                        await approveGraduationComment(comment.id, adminEmail);
+                        await approveEventComment(eventTitle, comment.id, adminEmail);
                         triggerFeedback('success', 'Comment approved!');
                       }}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs uppercase rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
@@ -544,7 +548,7 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
                     </button>
                     <button
                       onClick={async () => {
-                        await deleteGraduationComment(comment.id);
+                        await deleteEventComment(eventTitle, comment.id);
                         triggerFeedback('success', 'Comment deleted.');
                       }}
                       className="p-2 bg-slate-900 hover:bg-red-950 text-slate-400 hover:text-red-300 rounded-xl transition-colors cursor-pointer border border-white/10"

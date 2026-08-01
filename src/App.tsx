@@ -22,7 +22,8 @@ import GraduationCeremonyGallery from './components/GraduationCeremonyGallery';
 import { UploadProgressModal } from './components/UploadProgressModal';
 
 import { SchoolPalette, Memory, ParentContribution, CustomSection } from './types';
-import { PALETTES, DEFAULT_PARENT_CONTRIBUTIONS, MEMORIES } from './data/schoolData';
+import { PALETTES, DEFAULT_PARENT_CONTRIBUTIONS, MEMORIES, FEATURED_EVENTS } from './data/schoolData';
+import { MAJOR_SCHOOL_EVENTS } from './data/schoolEventsData';
 import { Sparkles, UserCheck, AlertCircle, Volume2, Star, Gift, Bell, Shield, X } from 'lucide-react';
 import { seedDatabaseIfEmpty, subscribeActiveBannerEvent, subscribePhotos, subscribeVideos, subscribeCustomSections, subscribeCommunityMemories, purgeRejectedAndDeletedFromFirestore } from './services/firebaseService';
 import { auth } from './firebase';
@@ -63,8 +64,13 @@ export default function App() {
   // Custom Dynamic Sections State
   const [customSections, setCustomSections] = useState<CustomSection[]>([]);
 
-  // Graduation Ceremony Gallery Modal state
+  // Graduation Ceremony / Major School Event Gallery Modal state
   const [isGraduationGalleryOpen, setIsGraduationGalleryOpen] = useState(false);
+  const [activeEventGallery, setActiveEventGallery] = useState<{
+    title: string;
+    category?: string;
+    description?: string;
+  } | null>(null);
 
   // Fullscreen Media Viewer state
   const [fullscreenMedia, setFullscreenMedia] = useState<{
@@ -86,15 +92,34 @@ export default function App() {
       }
     };
 
+    const handleOpenEventGallery = (e: Event) => {
+      const customEvent = e as CustomEvent<{ title?: string; category?: string; description?: string }>;
+      const detail = customEvent.detail || {};
+      const title = typeof detail === 'string' ? detail : (detail.title || 'Graduation Ceremony');
+
+      const foundEvent = MAJOR_SCHOOL_EVENTS.find(evt => evt.title.toLowerCase() === title.toLowerCase())
+        || FEATURED_EVENTS.find(evt => evt.title.toLowerCase() === title.toLowerCase());
+
+      setActiveEventGallery({
+        title: foundEvent?.title || title,
+        category: detail.category || foundEvent?.category || 'Events',
+        description: detail.description || foundEvent?.description || `Explore photos, video highlights, and shared memories from ${foundEvent?.title || title}.`
+      });
+    };
+
     const handleOpenGraduationGallery = () => {
-      setIsGraduationGalleryOpen(true);
+      handleOpenEventGallery(new CustomEvent('open-event-gallery', {
+        detail: { title: 'Graduation Ceremony' }
+      }));
     };
 
     window.addEventListener('open-fullscreen-media', handleOpenMedia);
     window.addEventListener('open-graduation-gallery', handleOpenGraduationGallery);
+    window.addEventListener('open-event-gallery', handleOpenEventGallery as EventListener);
     return () => {
       window.removeEventListener('open-fullscreen-media', handleOpenMedia);
       window.removeEventListener('open-graduation-gallery', handleOpenGraduationGallery);
+      window.removeEventListener('open-event-gallery', handleOpenEventGallery as EventListener);
     };
   }, []);
 
@@ -458,10 +483,18 @@ export default function App() {
                 <FeaturedEvents />
               </ScrollReveal>
 
-              {/* Graduation Ceremony Digital Memory Gallery Modal (Opened by clicking Graduation Ceremony Card) */}
-              {isGraduationGalleryOpen && (
+              {/* Major School Event Digital Memory Gallery Modal (Opened by clicking ANY Event Card) */}
+              {(activeEventGallery || isGraduationGalleryOpen) && (
                 <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-950 animate-in fade-in duration-300">
-                  <GraduationCeremonyGallery onClose={() => setIsGraduationGalleryOpen(false)} />
+                  <GraduationCeremonyGallery 
+                    eventTitle={activeEventGallery?.title || 'Graduation Ceremony'}
+                    eventCategory={activeEventGallery?.category}
+                    eventDescription={activeEventGallery?.description}
+                    onClose={() => {
+                      setActiveEventGallery(null);
+                      setIsGraduationGalleryOpen(false);
+                    }} 
+                  />
                 </div>
               )}
 

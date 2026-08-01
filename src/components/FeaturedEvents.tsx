@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Calendar, ArrowRight, ArrowLeft, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
-import { FEATURED_EVENTS } from '../data/schoolData';
+import { MAJOR_SCHOOL_EVENTS } from '../data/schoolEventsData';
 import { db } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { getOptimizedImageUrl } from '../utils/imageUtils';
 
 export default function FeaturedEvents() {
-  const [events, setEvents] = useState<any[]>(FEATURED_EVENTS);
+  const [events, setEvents] = useState<any[]>(MAJOR_SCHOOL_EVENTS);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const handleScroll = (direction: 'left' | 'right') => {
@@ -21,42 +21,33 @@ export default function FeaturedEvents() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.events && data.events.length > 0) {
-          setEvents(data.events);
+          // Merge custom cms events with MAJOR_SCHOOL_EVENTS to ensure all 30 major events are present
+          const merged = [...data.events];
+          MAJOR_SCHOOL_EVENTS.forEach(mEvt => {
+            if (!merged.some(e => e.title.toLowerCase() === mEvt.title.toLowerCase())) {
+              merged.push(mEvt);
+            }
+          });
+          setEvents(merged);
         } else {
-          setEvents(FEATURED_EVENTS);
+          setEvents(MAJOR_SCHOOL_EVENTS);
         }
       }
     }, (err) => {
       console.warn("Using default school events due to:", err);
-      setEvents(FEATURED_EVENTS);
+      setEvents(MAJOR_SCHOOL_EVENTS);
     });
     return () => unsub();
   }, []);
 
-  const handleScrollToGallery = (tag: string) => {
-    if (tag.toLowerCase().includes('graduation')) {
-      window.dispatchEvent(new CustomEvent('open-graduation-gallery'));
-      return;
-    }
+  const handleOpenEventGallery = (eventItem: any) => {
+    const title = typeof eventItem === 'string' ? eventItem : eventItem.title;
+    const category = typeof eventItem === 'object' ? eventItem.category : undefined;
+    const description = typeof eventItem === 'object' ? eventItem.description : undefined;
 
-    // Scroll to gallery
-    const target = document.getElementById('gallery');
-    if (target) {
-      const offset = 80;
-      const bodyRect = document.body.getBoundingClientRect().top;
-      const elementRect = target.getBoundingClientRect().top;
-      const elementPosition = elementRect - bodyRect;
-      const offsetPosition = elementPosition - offset;
-
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: 'smooth'
-      });
-    }
-
-    // Attempt to set filter if active
-    const event = new CustomEvent('filter-gallery-tag', { detail: tag });
-    window.dispatchEvent(event);
+    window.dispatchEvent(new CustomEvent('open-event-gallery', {
+      detail: { title, category, description }
+    }));
   };
 
   return (
@@ -139,7 +130,7 @@ export default function FeaturedEvents() {
             {events.map((event) => (
               <article
                 key={event.title}
-                onClick={() => handleScrollToGallery(event.title)}
+                onClick={() => handleOpenEventGallery(event)}
                 className="flex flex-col glass-card overflow-hidden shadow-xl border border-white/60 group hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300 w-[82vw] sm:w-[320px] md:w-[340px] shrink-0 snap-start rounded-2xl cursor-pointer"
               >
                 {/* Cover Image Container */}
@@ -182,7 +173,10 @@ export default function FeaturedEvents() {
                   {/* Footer Trigger */}
                   <div className="mt-5 pt-4 border-t border-gray-50">
                     <button
-                      onClick={() => handleScrollToGallery(event.title)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenEventGallery(event);
+                      }}
                       className="flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] uppercase tracking-wider hover:text-[var(--accent)] transition-colors group/btn"
                     >
                       <span>View Gallery</span>

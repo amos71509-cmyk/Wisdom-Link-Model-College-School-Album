@@ -10,8 +10,8 @@ import { GraduationMemory, GraduationMemoryComment } from '../types';
 import { 
   toggleLike, 
   subscribeMediaLikes, 
-  addGraduationMemoryComment, 
-  subscribeGraduationMemoryComments 
+  addEventMemoryComment, 
+  subscribeEventMemoryComments 
 } from '../services/firebaseService';
 import { getOptimizedImageUrl, preloadImage } from '../utils/imageUtils';
 
@@ -19,12 +19,14 @@ interface GraduationReelsViewerProps {
   items: GraduationMemory[];
   initialItem: GraduationMemory;
   onClose: () => void;
+  eventTitle?: string;
 }
 
 export default function GraduationReelsViewer({
   items,
   initialItem,
-  onClose
+  onClose,
+  eventTitle = 'Graduation Ceremony'
 }: GraduationReelsViewerProps) {
   // Requirement 3 & 4: Strict media queue isolation so photos only show photos and videos only show videos
   const mediaQueue = React.useMemo(() => {
@@ -158,7 +160,8 @@ export default function GraduationReelsViewer({
       setHasLiked(userHasLiked);
     });
 
-    const unsubComments = subscribeGraduationMemoryComments(activeItem.id, (commentsList) => {
+    const effectiveEventTitle = eventTitle || activeItem.eventName || 'Graduation Ceremony';
+    const unsubComments = subscribeEventMemoryComments(effectiveEventTitle, activeItem.id, (commentsList) => {
       setComments(commentsList);
     });
 
@@ -403,9 +406,10 @@ export default function GraduationReelsViewer({
 
     setCommentSubmitting(true);
     try {
-      await addGraduationMemoryComment({
+      const effectiveEventTitle = eventTitle || activeItem.eventName || 'Graduation Ceremony';
+      await addEventMemoryComment(effectiveEventTitle, {
         memoryId: activeItem.id,
-        authorName: newCommentName.trim() || 'Graduation Guest',
+        authorName: newCommentName.trim() || 'Guest',
         text: newCommentText.trim()
       });
       setNewCommentText('');
