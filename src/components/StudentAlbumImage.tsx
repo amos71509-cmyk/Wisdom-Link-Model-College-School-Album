@@ -32,7 +32,7 @@ const StudentAlbumImage: React.FC<StudentAlbumImageProps> = ({
         <img 
           src={getOptimizedImageUrl(imageUrl, 600)} 
           alt={`${studentName} graduation memory`}
-          className="w-full h-full object-contain bg-slate-950 p-1 group-hover/album:scale-104 transition-transform duration-300"
+          className="w-full h-full object-cover object-center group-hover/album:scale-105 transition-transform duration-300"
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"

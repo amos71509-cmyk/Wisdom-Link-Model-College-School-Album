@@ -319,7 +319,7 @@ export default function GraduatesDirectory({ onBackToHome, cleanUpMode }: Gradua
                 <img
                   src={getOptimizedImageUrl(stud.image, 400)}
                   alt={stud.name}
-                  className="w-full h-full object-contain bg-slate-950 p-1 transition-all duration-700 group-hover:scale-104"
+                  className="w-full h-full object-cover object-top transition-all duration-700 group-hover:scale-105"
                   loading="lazy"
                   decoding="async"
                   referrerPolicy="no-referrer"
@@ -426,7 +426,7 @@ export default function GraduatesDirectory({ onBackToHome, cleanUpMode }: Gradua
                   <img
                     src={getOptimizedImageUrl(activeStudent.image, 800)}
                     alt={activeStudent.name}
-                    className="absolute inset-0 w-full h-full object-contain bg-slate-950 p-2 filter brightness-[0.95] group-hover/portrait:scale-105 transition-transform duration-350"
+                    className="absolute inset-0 w-full h-full object-cover object-top filter brightness-[0.95] group-hover/portrait:scale-105 transition-transform duration-350"
                     loading="lazy"
                     decoding="async"
                     referrerPolicy="no-referrer"

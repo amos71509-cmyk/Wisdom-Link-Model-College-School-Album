@@ -3,7 +3,6 @@ import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import { PrincipalHonourSection, TeachersHonourSection } from './components/HonourSections';
 import FeaturedEvents from './components/FeaturedEvents';
-import MemoryGallery from './components/MemoryGallery';
 import TimelineSection from './components/TimelineSection';
 import GraduandWall from './components/GraduandWall';
 import ParentContributions from './components/ParentContributions';
@@ -461,41 +460,10 @@ export default function App() {
 
               {/* Graduation Ceremony Digital Memory Gallery Modal (Opened by clicking Graduation Ceremony Card) */}
               {isGraduationGalleryOpen && (
-                <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-950/95 backdrop-blur-2xl animate-in fade-in duration-300">
-                  <div className="relative min-h-screen py-6 sm:py-10 px-2 sm:px-6">
-                    {/* Sticky top bar for quick navigation */}
-                    <div className="sticky top-4 z-[10000] max-w-7xl mx-auto px-4 flex justify-between items-center bg-slate-900/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl border border-white/10 shadow-2xl mb-8">
-                      <div className="flex items-center gap-3 text-white">
-                        <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
-                          <Sparkles className="w-5 h-5 animate-pulse" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-sm sm:text-base text-white font-display leading-tight">
-                            Graduation Ceremony Archive
-                          </h3>
-                          <p className="text-xs text-slate-400 hidden sm:block">
-                            Explore photo & video highlights, or submit your own graduation memory
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => setIsGraduationGalleryOpen(false)}
-                        className="flex items-center gap-2 px-4 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-xs uppercase tracking-widest shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40"
-                      >
-                        <X className="w-4 h-4 shrink-0" />
-                        <span>Close Gallery</span>
-                      </button>
-                    </div>
-
-                    <GraduationCeremonyGallery onClose={() => setIsGraduationGalleryOpen(false)} />
-                  </div>
+                <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-950 animate-in fade-in duration-300">
+                  <GraduationCeremonyGallery onClose={() => setIsGraduationGalleryOpen(false)} />
                 </div>
               )}
-
-              {/* Masonry Memory Gallery on Main Page */}
-              <ScrollReveal variant="fade-up" duration={0.95}>
-                <MemoryGallery customMemories={customMemories} cleanUpMode={cleanUpMode} />
-              </ScrollReveal>
 
               {/* Interactive Chronological Memory Timeline (2022 -> 2026) */}
               <ScrollReveal variant="blur-reveal" duration={1.1}>

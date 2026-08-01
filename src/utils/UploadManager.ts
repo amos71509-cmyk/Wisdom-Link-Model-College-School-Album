@@ -375,9 +375,12 @@ class UploadManagerService {
     resourceType: string,
     startTime: number
   ): Promise<UploadResult> {
-    this.logStep(5, `Requesting Cloudinary signature from /api/cloudinary-signature...`);
+    const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|webm)$/i.test(file.name);
+    const targetResType = isVideo ? "video" : (file.type.startsWith("image/") ? "image" : (resourceType && resourceType !== "auto" ? resourceType : "auto"));
 
-    const sigRes = await fetch(`/api/cloudinary-signature?folder=${encodeURIComponent(folder)}&resource_type=${encodeURIComponent(resourceType)}`, {
+    this.logStep(5, `Requesting Cloudinary signature from /api/cloudinary-signature for resource_type=${targetResType}...`);
+
+    const sigRes = await fetch(`/api/cloudinary-signature?folder=${encodeURIComponent(folder)}&resource_type=${encodeURIComponent(targetResType)}`, {
       method: "GET",
       headers: { "Accept": "application/json" }
     });
@@ -392,7 +395,7 @@ class UploadManagerService {
       throw this.createStepError("Signing", sigData.error || "Server returned invalid signature data.", 500);
     }
 
-    this.logStep(6, `Signature obtained. Starting direct browser-to-Cloudinary XHR upload (${resourceType})...`);
+    this.logStep(6, `Signature obtained. Starting direct browser-to-Cloudinary XHR upload (${targetResType})...`);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -412,14 +415,6 @@ class UploadManagerService {
       formData.append("transformation", sigData.transformation);
     }
     formData.append("signature", sigData.signature);
-
-    const targetResType = resourceType === "auto" ? (file.type.startsWith("video/") ? "video" : "image") : resourceType;
-
-    // Requirement 3 & 14: Use resumable chunked upload with automatic retry for videos or files > 6 MB
-    if (targetResType === "video" || file.size > 6 * 1024 * 1024) {
-      this.logStep(6, `Starting resumable chunked browser-to-Cloudinary upload (${targetResType}, ${Math.round(file.size/1024/1024)} MB)...`);
-      return this.performResumableChunkedUpload(task, file, sigData, targetResType, startTime);
-    }
 
     formData.append("resource_type", targetResType);
 
@@ -531,7 +526,7 @@ class UploadManagerService {
   ): Promise<UploadResult> {
     const CHUNK_SIZE = 6 * 1024 * 1024; // 6 MB chunk size
     const uniqueUploadId = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${targetResType}/upload_chunked`;
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${targetResType}/upload`;
     let offset = 0;
 
     console.log(`[RESUMABLE UPLOAD START] File: "${file.name}", Size: ${file.size} bytes, ChunkSize: ${CHUNK_SIZE}, UploadID: ${uniqueUploadId}`);

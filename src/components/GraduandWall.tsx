@@ -249,7 +249,7 @@ export default function GraduandWall({ cleanUpMode, onUploadClick, onViewAllClic
                     <img
                       src={getOptimizedImageUrl(stud.image, 450)}
                       alt={stud.name}
-                      className="w-full h-full object-contain bg-slate-950 p-1 transition-transform duration-500 group-hover/img:scale-105"
+                      className="w-full h-full object-cover object-center transition-transform duration-500 group-hover/img:scale-105"
                       loading="lazy"
                       decoding="async"
                       referrerPolicy="no-referrer"

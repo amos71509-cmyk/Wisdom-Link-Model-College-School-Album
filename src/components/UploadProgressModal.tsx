@@ -20,6 +20,15 @@ export const UploadProgressModal: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (stats?.status === 'completed') {
+      const timer = setTimeout(() => {
+        setDismissed(true);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [stats?.status]);
+
   if (!stats || dismissed) {
     return null;
   }

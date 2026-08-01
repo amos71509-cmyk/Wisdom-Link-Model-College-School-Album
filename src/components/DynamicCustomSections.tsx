@@ -188,7 +188,7 @@ export default function DynamicCustomSections({ sections }: DynamicCustomSection
                       <img
                         src={section.mediaUrl}
                         alt={section.title}
-                        className="w-full h-full object-contain bg-slate-950 p-1 group-hover:scale-105 transition-transform duration-500"
+                        className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
                         referrerPolicy="no-referrer"
                       />
                     )}
@@ -233,7 +233,7 @@ export default function DynamicCustomSections({ sections }: DynamicCustomSection
                     <img
                       src={section.mediaUrl}
                       alt={section.title}
-                      className="w-full h-full object-contain bg-slate-950 p-1"
+                      className="w-full h-full object-cover object-center"
                     />
                   )}
                 </div>

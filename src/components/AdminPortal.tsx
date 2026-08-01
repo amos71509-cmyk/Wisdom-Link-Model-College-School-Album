@@ -259,6 +259,154 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
   const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null);
   const [previewMediaType, setPreviewMediaType] = useState<'image' | 'video' | null>(null);
 
+  // CHANGE THUMBNAIL FEATURE STATE
+  const [thumbnailTarget, setThumbnailTarget] = useState<{
+    type: 'milestone' | 'school_event' | 'video' | 'graduation_memory';
+    id: string;
+    title: string;
+    currentThumbnail: string;
+    itemData?: any;
+  } | null>(null);
+
+  const [thumbnailSourceMode, setThumbnailSourceMode] = useState<'upload' | 'picker'>('upload');
+  const [thumbnailFileToUpload, setThumbnailFileToUpload] = useState<File | null>(null);
+  const [thumbnailChosenUrl, setThumbnailChosenUrl] = useState<string>('');
+  const [thumbnailUploading, setThumbnailUploading] = useState(false);
+
+  // Pool of existing images across CMS for the thumbnail picker
+  const existingImagePool = React.useMemo(() => {
+    const urls = new Set<string>();
+    
+    // School Events
+    schoolEvents.forEach(ev => {
+      if (ev.image) urls.add(ev.image);
+      if (Array.isArray(ev.gallery)) {
+        ev.gallery.forEach((g: string) => g && urls.add(g));
+      }
+    });
+
+    // Timeline Events / Milestones
+    timelineEvents.forEach(t => {
+      if (t.image) urls.add(t.image);
+    });
+
+    // Hero slides
+    heroSlides.forEach(s => {
+      if (s.url) urls.add(s.url);
+    });
+
+    // History
+    if (historyConfig.coverImage) urls.add(historyConfig.coverImage);
+    if (Array.isArray(historyConfig.gallery)) {
+      historyConfig.gallery.forEach(g => g && urls.add(g));
+    }
+
+    // Community memories
+    communityMemories.forEach(m => {
+      if (m.mediaUrl && m.mediaType === 'image') urls.add(m.mediaUrl);
+      if (m.thumbnailUrl) urls.add(m.thumbnailUrl);
+    });
+
+    return Array.from(urls).filter(u => typeof u === 'string' && u.trim().length > 0);
+  }, [schoolEvents, timelineEvents, heroSlides, historyConfig, communityMemories]);
+
+  const handleOpenChangeThumbnail = (target: {
+    type: 'milestone' | 'school_event' | 'video' | 'graduation_memory';
+    id: string;
+    title: string;
+    currentThumbnail: string;
+    itemData?: any;
+  }) => {
+    setThumbnailTarget(target);
+    setThumbnailSourceMode('upload');
+    setThumbnailFileToUpload(null);
+    setThumbnailChosenUrl(target.currentThumbnail || '');
+  };
+
+  const handleSaveThumbnailChange = async () => {
+    if (!thumbnailTarget) return;
+
+    setThumbnailUploading(true);
+    let finalUrl = '';
+
+    try {
+      if (thumbnailSourceMode === 'upload') {
+        if (!thumbnailFileToUpload) {
+          if (!thumbnailChosenUrl) {
+            triggerFeedback('error', 'Please select or upload an image file.');
+            setThumbnailUploading(false);
+            return;
+          }
+          finalUrl = thumbnailChosenUrl;
+        } else {
+          const res = await uploadFileToCloudinary(thumbnailFileToUpload, { folder: 'scholars_class_2026' });
+          finalUrl = res.secure_url || res.url;
+        }
+      } else {
+        if (!thumbnailChosenUrl) {
+          triggerFeedback('error', 'Please click an image from the gallery picker.');
+          setThumbnailUploading(false);
+          return;
+        }
+        finalUrl = thumbnailChosenUrl;
+      }
+
+      if (!finalUrl) {
+        throw new Error('Could not obtain a valid thumbnail image URL.');
+      }
+
+      const oldUrl = thumbnailTarget.currentThumbnail;
+
+      // 1. Update Firestore
+      if (thumbnailTarget.type === 'milestone') {
+        await setDoc(doc(db, "timeline", thumbnailTarget.id), {
+          ...thumbnailTarget.itemData,
+          image: finalUrl,
+          thumbnailUrl: finalUrl,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } else if (thumbnailTarget.type === 'school_event') {
+        const updatedEvents = schoolEvents.map(ev => {
+          if (ev.title.toLowerCase() === thumbnailTarget.id.toLowerCase() || ev.title === thumbnailTarget.title) {
+            return { ...ev, image: finalUrl };
+          }
+          return ev;
+        });
+        await setDoc(doc(db, "cms_content", "school_events"), { events: updatedEvents });
+        setSchoolEvents(updatedEvents);
+      } else if (thumbnailTarget.type === 'video') {
+        await setDoc(doc(db, "videos", thumbnailTarget.id), {
+          ...thumbnailTarget.itemData,
+          thumbnailUrl: finalUrl,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      // 2. Old Cloudinary cleanup if no longer referenced anywhere
+      if (oldUrl && oldUrl !== finalUrl && oldUrl.includes('cloudinary.com')) {
+        const isUsedInSchoolEvents = schoolEvents.some(e => e.image === oldUrl || (e.gallery && e.gallery.includes(oldUrl)));
+        const isUsedInMilestones = timelineEvents.some(t => t.image === oldUrl);
+        const isUsedInHero = heroSlides.some(s => s.url === oldUrl);
+
+        if (!isUsedInSchoolEvents && !isUsedInMilestones && !isUsedInHero) {
+          fetch('/api/delete-cloudinary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: oldUrl })
+          }).catch(err => console.warn('Old thumbnail cleanup skipped/failed:', err));
+        }
+      }
+
+      triggerFeedback('success', `Thumbnail for "${thumbnailTarget.title}" updated successfully!`);
+      setThumbnailTarget(null);
+    } catch (err: any) {
+      console.error('Failed to change thumbnail:', err);
+      triggerFeedback('error', err.message || 'Failed to update thumbnail.');
+    } finally {
+      setThumbnailUploading(false);
+    }
+  };
+
   // IMMUTABLE PROTECTION CONTROLLER
   const IMMUTABLE_ADMIN_EMAIL = 'justfashion414@gmail.com';
 
@@ -2627,7 +2775,21 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                                 <p className="text-[10px] text-slate-500 truncate">{evt.description}</p>
                               </div>
                             </div>
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handleOpenChangeThumbnail({
+                                  type: 'milestone',
+                                  id: evt.id,
+                                  title: evt.title,
+                                  currentThumbnail: evt.image,
+                                  itemData: evt
+                                })}
+                                className="px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                                title="Change Cover Thumbnail"
+                              >
+                                <Camera className="w-3 h-3" />
+                                <span>Change Thumbnail</span>
+                              </button>
                               <button onClick={() => {
                                 setEditingEvent(evt);
                                 setEventForm({ date: evt.date, title: evt.title, description: evt.description, image: evt.image });
@@ -2754,7 +2916,21 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                               <p className="text-[10px] text-slate-500">By: {vid.submittedBy} ({vid.role}) | {new Date(vid.uploadedAt).toLocaleDateString()}</p>
                               <p className="text-[9px] text-slate-400 font-mono truncate mt-0.5">{vid.url}</p>
                             </div>
-                            <div className="flex gap-1 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handleOpenChangeThumbnail({
+                                  type: 'video',
+                                  id: vid.id,
+                                  title: vid.title,
+                                  currentThumbnail: vid.thumbnailUrl || vid.url || '',
+                                  itemData: vid
+                                })}
+                                className="px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                                title="Change Video Thumbnail"
+                              >
+                                <Camera className="w-3 h-3" />
+                                <span>Change Thumbnail</span>
+                              </button>
                               <button onClick={() => {
                                 setEditingVideo(vid);
                                 setVideoForm({ title: vid.title, submittedBy: vid.submittedBy, role: vid.role, url: vid.url });
@@ -3648,7 +3824,7 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                           <div className="space-y-3">
                             <span className="text-[9px] font-mono font-bold text-indigo-400 uppercase tracking-widest block">Live Website Principal Preview</span>
                             <div className="flex items-center gap-3 border-b border-white/5 pb-3 text-left">
-                              <img src={principalForm.image} alt="preview" className="w-12 h-16 object-cover rounded-lg border border-white/10 shrink-0 bg-slate-950" />
+                              <img src={principalForm.image} alt="preview" className="w-12 h-16 object-cover object-top rounded-lg border border-white/10 shrink-0 bg-slate-950" />
                               <div className="min-w-0">
                                 <h4 className="text-xs font-extrabold text-white truncate">{principalForm.name}</h4>
                                 <p className="text-[10px] text-slate-400 truncate">{principalForm.title}</p>
@@ -4284,6 +4460,20 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                                 </div>
 
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => handleOpenChangeThumbnail({
+                                      type: 'school_event',
+                                      id: evt.title,
+                                      title: evt.title,
+                                      currentThumbnail: evt.image || '',
+                                      itemData: evt
+                                    })}
+                                    className="px-2 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                                    title="Change Cover Thumbnail"
+                                  >
+                                    <Camera className="w-3 h-3" />
+                                    <span>Change Thumbnail</span>
+                                  </button>
                                   <button
                                     onClick={() => {
                                       setEditingSchoolEvent(evt);
@@ -5106,6 +5296,213 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                 Reject Comment
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          CHANGE THUMBNAIL MODAL
+          ---------------------------------------------------- */}
+      {thumbnailTarget && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-3xl p-6 w-full max-w-2xl text-left shadow-2xl my-8 space-y-6">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white">Change Thumbnail / Cover Image</h3>
+                  <p className="text-xs text-amber-400/90 font-medium truncate max-w-sm">
+                    {thumbnailTarget.title}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setThumbnailTarget(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Live Preview & Comparison */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Current Thumbnail
+                </span>
+                <div className="h-40 w-full bg-slate-950 rounded-xl overflow-hidden border border-white/10 relative">
+                  {thumbnailTarget.currentThumbnail ? (
+                    <img
+                      src={thumbnailTarget.currentThumbnail}
+                      alt="Current thumbnail"
+                      className="w-full h-full object-cover object-center"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs text-slate-600 font-mono">
+                      No Thumbnail
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block">
+                  New Preview Selection
+                </span>
+                <div className="h-40 w-full bg-slate-950 rounded-xl overflow-hidden border border-amber-500/40 relative">
+                  {thumbnailSourceMode === 'upload' && thumbnailFileToUpload ? (
+                    <img
+                      src={URL.createObjectURL(thumbnailFileToUpload)}
+                      alt="Uploaded preview"
+                      className="w-full h-full object-cover object-center"
+                    />
+                  ) : thumbnailChosenUrl ? (
+                    <img
+                      src={thumbnailChosenUrl}
+                      alt="Chosen preview"
+                      className="w-full h-full object-cover object-center"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center text-xs text-slate-500">
+                      <ImageIcon className="w-8 h-8 mb-1 opacity-40 text-amber-400" />
+                      <span>Select or upload a new image to see live preview</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Source Selection Mode Tabs */}
+            <div className="flex bg-slate-950 p-1.5 rounded-2xl border border-white/10 gap-1">
+              <button
+                onClick={() => setThumbnailSourceMode('upload')}
+                className={`flex-1 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  thumbnailSourceMode === 'upload'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Upload New Image</span>
+              </button>
+              <button
+                onClick={() => setThumbnailSourceMode('picker')}
+                className={`flex-1 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  thumbnailSourceMode === 'picker'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <ImageIcon className="w-4 h-4" />
+                <span>Pick From Existing ({existingImagePool.length})</span>
+              </button>
+            </div>
+
+            {/* Source Tab 1: Upload */}
+            {thumbnailSourceMode === 'upload' && (
+              <div className="p-5 bg-slate-950/80 border border-dashed border-white/20 rounded-2xl text-center space-y-3">
+                <input
+                  type="file"
+                  id="thumbnail-file-input"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setThumbnailFileToUpload(file);
+                      setThumbnailChosenUrl(URL.createObjectURL(file));
+                    }
+                  }}
+                  className="hidden"
+                />
+                <label
+                  htmlFor="thumbnail-file-input"
+                  className="cursor-pointer flex flex-col items-center justify-center gap-2 group"
+                >
+                  <div className="p-3 rounded-full bg-amber-500/10 group-hover:bg-amber-500/20 text-amber-400 transition-colors">
+                    <UploadCloud className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-white">
+                      {thumbnailFileToUpload ? thumbnailFileToUpload.name : 'Click to select image file from computer'}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Supports JPG, PNG, WEBP up to 10MB
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Source Tab 2: Existing Media Picker Grid */}
+            {thumbnailSourceMode === 'picker' && (
+              <div className="space-y-2">
+                <span className="text-[10px] text-slate-400 block">
+                  Select an image from existing website media:
+                </span>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-2 bg-slate-950 rounded-2xl border border-white/10">
+                  {existingImagePool.map((url, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setThumbnailFileToUpload(null);
+                        setThumbnailChosenUrl(url);
+                      }}
+                      className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-all group cursor-pointer ${
+                        thumbnailChosenUrl === url
+                          ? 'border-amber-400 ring-2 ring-amber-400/40 scale-105 z-10'
+                          : 'border-transparent hover:border-white/40'
+                      }`}
+                    >
+                      <img
+                        src={url}
+                        alt={`Media asset ${idx}`}
+                        className="w-full h-full object-cover object-center"
+                      />
+                      {thumbnailChosenUrl === url && (
+                        <div className="absolute inset-0 bg-amber-500/20 flex items-center justify-center">
+                          <CheckCircle className="w-5 h-5 text-amber-400" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setThumbnailTarget(null)}
+                disabled={thumbnailUploading}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveThumbnailChange}
+                disabled={thumbnailUploading}
+                className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {thumbnailUploading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving New Thumbnail...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Save New Thumbnail</span>
+                  </>
+                )}
+              </button>
+            </div>
+
           </div>
         </div>
       )}

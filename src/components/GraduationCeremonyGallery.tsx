@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Award, Camera, Heart, Play, Sparkles, Users, Video, X, CheckCircle2, 
   UploadCloud, Search, Filter, MessageSquare, Download, ThumbsUp, Loader2, 
-  Calendar, Film, Image as ImageIcon, ShieldCheck, ArrowLeft
+  Calendar, Film, Image as ImageIcon, ShieldCheck, ArrowLeft, RotateCcw
 } from 'lucide-react';
 import { GraduationMemory } from '../types';
 import { 
@@ -13,7 +14,7 @@ import GraduationReelsViewer from './GraduationReelsViewer';
 import { compressImage } from '../lib/imageCompressor';
 import { getCloudinaryThumbnail } from '../utils/videoUtils';
 import { getOptimizedImageUrl } from '../utils/imageUtils';
-import { stageOrUploadMedia, validateUploadFile } from '../utils/uploadHelper';
+import { stageOrUploadMedia, validateUploadFile, uploadMultipleImagesSequentially } from '../utils/uploadHelper';
 
 const UPLOADER_TYPES = [
   'Parent',
@@ -175,20 +176,27 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
   const [uploadCaption, setUploadCaption] = useState('');
   const [uploadName, setUploadName] = useState('');
   
-  // Multi-file selection state
+  // Multi-file selection state with upload queue tracking
   interface UploadFileItem {
     id: string;
     file: File;
     previewUrl: string;
     mediaType: 'image' | 'video';
     sizeText: string;
+    status: 'idle' | 'uploading' | 'completed' | 'error';
+    progressPercent: number;
+    errorMsg?: string;
+    mediaUrl?: string;
+    docId?: string;
   }
   const [selectedFiles, setSelectedFiles] = useState<UploadFileItem[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
   const [uploadProgressPercent, setUploadProgressPercent] = useState(0);
   const [uploadError, setUploadError] = useState('');
   const [uploadSuccessToast, setUploadSuccessToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
   const [uploadedCount, setUploadedCount] = useState(0);
 
   // Fullscreen Viewer State
@@ -255,70 +263,142 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
     return () => unsub();
   }, []);
 
-  // Video Autoplay on Scroll (Intersection Observer)
-  useEffect(() => {
-    const videoElements = document.querySelectorAll<HTMLVideoElement>('.ceremony-video-item');
-    if (videoElements.length === 0) return;
+  // File Selector & Drag-and-Drop Handler (Supports up to 20 images & 5 videos concurrently)
+  const handleFilesAdded = (filesArray: File[]) => {
+    if (!filesArray || filesArray.length === 0) return;
 
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        const video = entry.target as HTMLVideoElement;
-        if (entry.isIntersecting) {
-          video.play().catch(() => {});
-        } else {
-          video.pause();
-        }
-      });
-    }, { threshold: 0.5 });
+    let currentImageCount = selectedFiles.filter(f => f.mediaType === 'image').length;
+    let currentVideoCount = selectedFiles.filter(f => f.mediaType === 'video').length;
 
-    videoElements.forEach(v => observer.observe(v));
+    const newItems: UploadFileItem[] = [];
+    const errors: string[] = [];
 
-    return () => {
-      videoElements.forEach(v => observer.unobserve(v));
-    };
-  }, [memories, selectedYear, selectedMemoryType, selectedMediaType, searchQuery]);
+    filesArray.forEach((f) => {
+      const validation = validateUploadFile(f);
+      if (!validation.valid) {
+        if (validation.error) errors.push(validation.error);
+        return;
+      }
 
-  // File Selector Handler (Supports Multiple Files & Auto-Detects Media Type)
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const filesArray: File[] = Array.from(e.target.files);
-      const newItems: UploadFileItem[] = [];
-      const errors: string[] = [];
+      const isImg = f.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(f.name);
+      const mediaType: 'image' | 'video' = isImg ? 'image' : 'video';
 
-      filesArray.forEach((f) => {
-        const validation = validateUploadFile(f);
-        if (!validation.valid) {
-          if (validation.error) errors.push(validation.error);
+      if (mediaType === 'image') {
+        if (currentImageCount >= 20) {
+          errors.push(`Maximum of 20 images reached. Skipped "${f.name}".`);
           return;
         }
-
-        const isImg = f.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(f.name);
-        newItems.push({
-          id: Math.random().toString(36).substring(2, 9),
-          file: f,
-          previewUrl: URL.createObjectURL(f),
-          mediaType: isImg ? 'image' : 'video',
-          sizeText: (f.size / (1024 * 1024)).toFixed(2) + ' MB'
-        });
-      });
-
-      if (errors.length > 0) {
-        setUploadError(errors.join(' '));
+        currentImageCount++;
       } else {
-        setUploadError('');
+        if (currentVideoCount >= 5) {
+          errors.push(`Maximum of 5 videos reached. Skipped "${f.name}".`);
+          return;
+        }
+        currentVideoCount++;
       }
 
-      if (newItems.length > 0) {
-        setSelectedFiles((prev) => [...prev, ...newItems]);
-      }
+      newItems.push({
+        id: `file_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        file: f,
+        previewUrl: isImg ? URL.createObjectURL(f) : '',
+        mediaType,
+        sizeText: (f.size / (1024 * 1024)).toFixed(2) + ' MB',
+        status: 'idle',
+        progressPercent: 0
+      });
+    });
+
+    if (errors.length > 0) {
+      setUploadError(errors.join(' '));
+    } else {
+      setUploadError('');
+    }
+
+    if (newItems.length > 0) {
+      setSelectedFiles((prev) => [...prev, ...newItems]);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFilesAdded(Array.from(e.target.files));
+      if (e.target) e.target.value = '';
     }
   };
 
   const removeSelectedFile = (id: string) => {
-    setSelectedFiles((prev) => prev.filter(f => f.id !== id));
+    setSelectedFiles((prev) => {
+      const target = prev.find(f => f.id === id);
+      if (target?.previewUrl) {
+        try { URL.revokeObjectURL(target.previewUrl); } catch (e) { /* ignore */ }
+      }
+      return prev.filter(f => f.id !== id);
+    });
   };
 
-  // Submit Graduation Ceremony Uploads (Multi-file enabled)
+  // Upload single file task independently
+  const uploadSingleFile = async (item: UploadFileItem): Promise<boolean> => {
+    setSelectedFiles((prev) =>
+      prev.map((f) =>
+        f.id === item.id
+          ? { ...f, status: 'uploading', progressPercent: 0, errorMsg: undefined }
+          : f
+      )
+    );
+
+    try {
+      const result = await stageOrUploadMedia(item.file, {
+        folder: 'scholars_class_2026',
+        onProgress: (pct) => {
+          setSelectedFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, progressPercent: pct } : f))
+          );
+        }
+      });
+
+      const finalMediaUrl = result.secure_url || result.url;
+      if (!finalMediaUrl) throw new Error("Upload failed to return valid media URL.");
+
+      let thumbnailUrl = '';
+      if (item.mediaType === 'video') {
+        thumbnailUrl = getCloudinaryThumbnail(finalMediaUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800';
+      }
+
+      // Immediately write metadata for this specific file upon Cloudinary upload success
+      const docId = await submitGraduationCeremonyMemory({
+        title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
+        eventName: 'Graduation Ceremony ' + uploadYear,
+        graduationYear: uploadYear,
+        uploadedByType: uploadRole as any,
+        memoryType: uploadType,
+        mediaType: item.mediaType,
+        mediaUrl: finalMediaUrl,
+        thumbnailUrl,
+        caption: uploadCaption,
+        uploaderName: uploadName.trim() || ('Anonymous ' + uploadRole),
+        isStaged: result.isStaged,
+        status: 'Pending'
+      });
+
+      setSelectedFiles((prev) =>
+        prev.map((f) =>
+          f.id === item.id
+            ? { ...f, status: 'completed', progressPercent: 100, mediaUrl: finalMediaUrl, docId }
+            : f
+        )
+      );
+      return true;
+    } catch (err: any) {
+      console.error(`[QUEUE ITEM FAIL] ${item.file.name}:`, err);
+      const errMsg = err?.message || 'Upload failed';
+      setSelectedFiles((prev) =>
+        prev.map((f) => (f.id === item.id ? { ...f, status: 'error', errorMsg: errMsg } : f))
+      );
+      return false;
+    }
+  };
+
+  // Submit Graduation Ceremony Queue (Concurrently uploads up to 3 files via UploadManagerV2)
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedFiles.length === 0) {
@@ -330,82 +410,153 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
       return;
     }
 
-    setUploading(true);
-    setUploadError('');
-    setUploadedCount(0);
-
-    const total = selectedFiles.length;
-    let successfulCount = 0;
-
-    try {
-      for (let i = 0; i < total; i++) {
-        const item = selectedFiles[i];
-        setUploadProgressText(`Uploading ${i + 1} of ${total}: ${item.file.name}`);
-        setUploadProgressPercent(Math.round(((i) / total) * 100));
-
-        console.log(`[UPLOAD FLOW] Staging upload for ${item.file.name}...`);
-        const result = await stageOrUploadMedia(item.file, {
-          folder: 'scholars_class_2026',
-          onProgress: (pct) => {
-            const overallPct = Math.round(((i + pct / 100) / total) * 100);
-            setUploadProgressPercent(overallPct);
-          }
-        });
-
-        const finalMediaUrl = result.secure_url || result.url;
-        if (!finalMediaUrl) {
-          throw new Error("Upload failed to return a valid media URL.");
-        }
-
-        console.log(`[UPLOAD FLOW SUCCESS] Staging URL ready: ${finalMediaUrl.substring(0, 50)}...`);
-
-        let thumbnailUrl = '';
-        if (item.mediaType === 'video') {
-          thumbnailUrl = getCloudinaryThumbnail(finalMediaUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800';
-        }
-
-        // Save ONLY the staged or media URL to Firestore
-        await submitGraduationCeremonyMemory({
-          title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
-          eventName: 'Graduation Ceremony ' + uploadYear,
-          graduationYear: uploadYear,
-          uploadedByType: uploadRole as any,
-          memoryType: uploadType,
-          mediaType: item.mediaType,
-          mediaUrl: finalMediaUrl,
-          thumbnailUrl,
-          caption: uploadCaption,
-          uploaderName: uploadName.trim() || ('Anonymous ' + uploadRole),
-          isStaged: result.isStaged,
-          status: 'Pending'
-        });
-
-        successfulCount++;
-        setUploadedCount(successfulCount);
-      }
-
-      setUploadProgressPercent(100);
-      setUploadProgressText('Successfully submitted to admin pending queue!');
-
-      setTimeout(() => {
-        setUploading(false);
+    const pendingItems = selectedFiles.filter(f => f.status === 'idle' || f.status === 'error');
+    if (pendingItems.length === 0) {
+      if (selectedFiles.every(f => f.status === 'completed')) {
         setIsUploadModalOpen(false);
         setSelectedFiles([]);
         setUploadCaption('');
         setUploadName('');
         setUploadSuccessToast(true);
         setTimeout(() => setUploadSuccessToast(false), 5000);
-      }, 500);
-
-    } catch (err: any) {
-      console.error('Upload error:', err);
-      let errMsg = 'An error occurred during submission. Please try again.';
-      if (err?.message && typeof err.message === 'string' && !err.message.includes('{"error":') && err.message.length < 150) {
-        errMsg = err.message;
       }
-      setUploadError(errMsg);
-      setUploading(false);
+      return;
     }
+
+    setUploading(true);
+    setUploadError('');
+
+    if (pendingItems.length === 1) {
+      // Single-image path completely untouched
+      await uploadSingleFile(pendingItems[0]);
+    } else {
+      // Brand-new sequential multiple-image upload path
+      const pendingFiles = pendingItems.map((p) => p.file);
+
+      // Set initial status to uploading for all pending items
+      setSelectedFiles((prev) =>
+        prev.map((f) =>
+          pendingItems.some((p) => p.id === f.id)
+            ? { ...f, status: 'uploading', progressPercent: 0, errorMsg: undefined }
+            : f
+        )
+      );
+
+      await uploadMultipleImagesSequentially(pendingFiles, {
+        folder: 'scholars_class_2026',
+        onProgress: (index, total, pct, file) => {
+          const item = pendingItems[index];
+          if (item) {
+            setSelectedFiles((prev) =>
+              prev.map((f) => (f.id === item.id ? { ...f, progressPercent: pct } : f))
+            );
+          }
+        },
+        onWriteFirestore: async (file, uploadResult) => {
+          const item = pendingItems.find((p) => p.file === file);
+          if (!item) return;
+
+          const finalMediaUrl = uploadResult.secure_url || uploadResult.url;
+          let thumbnailUrl = '';
+          if (item.mediaType === 'video') {
+            thumbnailUrl = getCloudinaryThumbnail(finalMediaUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800';
+          }
+
+          // Save each successful image to Firestore immediately after Cloudinary returns success
+          const docId = await submitGraduationCeremonyMemory({
+            title: uploadCaption.substring(0, 40) + (uploadCaption.length > 40 ? '...' : ''),
+            eventName: 'Graduation Ceremony ' + uploadYear,
+            graduationYear: uploadYear,
+            uploadedByType: uploadRole as any,
+            memoryType: uploadType,
+            mediaType: item.mediaType,
+            mediaUrl: finalMediaUrl,
+            thumbnailUrl,
+            caption: uploadCaption,
+            uploaderName: uploadName.trim() || ('Anonymous ' + uploadRole),
+            isStaged: false,
+            status: 'Pending'
+          });
+
+          setSelectedFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? { ...f, status: 'completed', progressPercent: 100, mediaUrl: finalMediaUrl, docId }
+                : f
+            )
+          );
+        },
+        onItemError: (file, error, index) => {
+          const item = pendingItems[index];
+          if (item) {
+            setSelectedFiles((prev) =>
+              prev.map((f) => (f.id === item.id ? { ...f, status: 'error', errorMsg: error.message } : f))
+            );
+          }
+        }
+      });
+    }
+
+    setUploading(false);
+
+    // Evaluate final queue state
+    setSelectedFiles((latestFiles) => {
+      const failed = latestFiles.filter(f => f.status === 'error').length;
+      const completed = latestFiles.filter(f => f.status === 'completed').length;
+
+      if (completed > 0) {
+        setUploadProgressPercent(100);
+        setUploadProgressText(`Uploaded successfully: ${completed}${failed > 0 ? `, Failed: ${failed}` : ''}`);
+        
+        // Notify user, close modal automatically, and auto-disappear notification toast after 3.5s
+        setTimeout(() => {
+          setIsUploadModalOpen(false);
+          setSelectedFiles([]);
+          setUploadCaption('');
+          setUploadName('');
+          setToastMessage(
+            failed === 0
+              ? `Successfully submitted ${completed} graduation memory item(s)! Awaiting approval.`
+              : `Uploaded ${completed} item(s) successfully (${failed} failed).`
+          );
+          setUploadSuccessToast(true);
+          setTimeout(() => {
+            setUploadSuccessToast(false);
+          }, 3500);
+        }, 800);
+      } else if (failed > 0) {
+        setUploadError(`Failed to upload ${failed} item(s). Click Retry on failed files.`);
+      }
+      return latestFiles;
+    });
+  };
+
+  const retrySingleFile = async (item: UploadFileItem) => {
+    if (!uploadCaption.trim()) {
+      setUploadError('Please provide a description or caption for your graduation memory.');
+      return;
+    }
+    setUploadError('');
+    setUploading(true);
+    await uploadSingleFile(item);
+    setUploading(false);
+
+    setSelectedFiles((latestFiles) => {
+      const failed = latestFiles.filter(f => f.status === 'error').length;
+      const completed = latestFiles.filter(f => f.status === 'completed').length;
+      if (completed > 0 && failed === 0) {
+        setTimeout(() => {
+          setIsUploadModalOpen(false);
+          setSelectedFiles([]);
+          setUploadCaption('');
+          setUploadName('');
+          setToastMessage(`Successfully submitted ${completed} graduation memory item(s)!`);
+          setUploadSuccessToast(true);
+          setTimeout(() => setUploadSuccessToast(false), 3500);
+        }, 500);
+      }
+      return latestFiles;
+    });
   };
 
   // Filtered Memories Calculation
@@ -443,66 +594,74 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
   });
 
   return (
-    <section id="graduation-highlights" className="py-20 bg-slate-950 text-slate-100 relative z-10 overflow-hidden border-t border-b border-white/10 my-8">
-      <div className={selectedItem ? "hidden" : "block"}>
+    <section id="graduation-highlights" className="py-6 sm:py-12 bg-slate-950 text-slate-100 relative z-10 border-t border-b border-white/10 my-4 sm:my-8">
+      
       {/* ==========================================================
-          STATIC FLOATING BUTTONS (FIXED POSITION)
+          PERMANENT FLOATING BUTTONS (FIXED POSITION ATTACHED TO VIEWPORT)
           ========================================================== */}
-      {/* LEFT (fixed position): Always visible while scrolling. Fixed to top-left corner. Never disappear. */}
-      <div className="fixed top-20 left-4 sm:top-24 sm:left-6 z-40 pointer-events-auto">
-        <button
-          type="button"
-          onClick={() => setIsUploadModalOpen(true)}
-          className="flex items-center gap-2 px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-[11px] sm:text-xs uppercase tracking-wider shadow-[0_10px_30px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40 group"
-        >
-          <UploadCloud className="w-4 h-4 shrink-0 group-hover:animate-bounce" />
-          <span>Upload Your Graduation Memory</span>
-        </button>
-      </div>
-
-      {/* RIGHT (fixed position): Only visible while upload overlay is open. Fixed to top-right corner. */}
-      {isUploadModalOpen && (
-        <div className="fixed top-20 right-4 sm:top-24 sm:right-6 z-[9999999] pointer-events-auto">
+      {!isUploadModalOpen && !selectedItem && (
+        <>
+          {/* TOP-LEFT: Upload Your Graduation Memory Button */}
           <button
             type="button"
-            onClick={closeAndResetModal}
-            className="flex items-center gap-2 px-4 py-2.5 sm:px-5 sm:py-3 rounded-2xl bg-slate-900/95 hover:bg-red-600 text-white font-black text-[11px] sm:text-xs uppercase tracking-wider shadow-[0_10px_30px_rgba(0,0,0,0.8)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/20 group"
+            onClick={openModal}
+            style={{
+              position: 'fixed',
+              top: 'max(10px, env(safe-area-inset-top, 10px))',
+              left: 'max(12px, env(safe-area-inset-left, 12px))',
+              zIndex: 99999,
+            }}
+            className="h-[38px] sm:h-[42px] px-[14px] py-[10px] rounded-[18px] bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-[13px] sm:text-[14px] uppercase tracking-wider shadow-[0_8px_25px_rgba(245,158,11,0.4)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-amber-300/40 flex items-center gap-2 shrink-0 group backdrop-blur-md"
           >
-            <ArrowLeft className="w-4 h-4 shrink-0 group-hover:-translate-x-1 transition-transform" />
-            <span>Back to Gallery</span>
+            <UploadCloud className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px] shrink-0 group-hover:animate-bounce" />
+            <span className="hidden sm:inline">Upload Your Graduation Memory</span>
+            <span className="sm:hidden">Upload Memory</span>
           </button>
-        </div>
+
+          {/* TOP-RIGHT: Back to Major Events Button */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                position: 'fixed',
+                top: 'max(10px, env(safe-area-inset-top, 10px))',
+                right: 'max(12px, env(safe-area-inset-right, 12px))',
+                zIndex: 99999,
+              }}
+              className="h-[38px] sm:h-[42px] px-[14px] py-[10px] rounded-[18px] bg-slate-900/95 hover:bg-slate-800 text-slate-100 border border-white/20 text-[13px] sm:text-[14px] font-bold shadow-xl transition-all cursor-pointer flex items-center gap-2 shrink-0 group backdrop-blur-md"
+            >
+              <ArrowLeft className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px] text-amber-400 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+              <span className="hidden sm:inline">Back to Major Events</span>
+              <span className="sm:hidden">Back</span>
+            </button>
+          )}
+        </>
       )}
+
+      <div className={isUploadModalOpen || selectedItem ? "hidden" : "block"}>
       
       {/* Toast Notification for Submission Success */}
       {uploadSuccessToast && (
         <div className="fixed bottom-6 right-6 z-[9999] bg-emerald-600 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400 animate-in slide-in-from-bottom duration-300">
-          <CheckCircle2 className="w-6 h-6 shrink-0" />
+          <CheckCircle2 className="w-6 h-6 shrink-0 text-emerald-200" />
           <div className="text-left">
-            <h4 className="font-bold text-sm">Graduation Memory Submitted!</h4>
-            <p className="text-xs text-emerald-100">Your memory is now awaiting administrator review and approval.</p>
+            <h4 className="font-bold text-sm text-white">Graduation Memory Submitted!</h4>
+            <p className="text-xs text-emerald-100 font-medium">
+              {toastMessage || 'Your memory is now awaiting administrator review and approval.'}
+            </p>
           </div>
         </div>
       )}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-bold transition-all mb-6 cursor-pointer shadow-lg hover:border-amber-400/50"
-          >
-            <ArrowLeft className="w-4 h-4 text-amber-400" />
-            <span>Back to Major Events</span>
-          </button>
-        )}
 
         {/* Header Title Section */}
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-12 text-left">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-10 text-left">
           <div className="max-w-3xl">
             <span className="text-xs font-extrabold uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>Graduation Ceremony Archive</span>
+              <span>Graduation Memories & Highlights</span>
             </span>
             <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight font-display">
               Graduation Ceremony Gallery
@@ -514,8 +673,8 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
 
           {/* Upload Button CTA */}
           <button
-            onClick={() => setIsUploadModalOpen(true)}
-            className="flex items-center justify-center gap-2 px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest shadow-2xl hover:scale-103 hover:shadow-amber-500/25 active:scale-98 transition-all cursor-pointer border border-amber-300/30 shrink-0"
+            onClick={openModal}
+            className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs uppercase tracking-widest shadow-2xl hover:scale-103 hover:shadow-amber-500/25 active:scale-98 transition-all cursor-pointer border border-amber-300/30 shrink-0"
           >
             <UploadCloud className="w-5 h-5 shrink-0" />
             <span>Upload Your Graduation Memory</span>
@@ -523,7 +682,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
         </div>
 
         {/* Filter & Search Bar */}
-        <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 md:p-6 mb-10 shadow-xl backdrop-blur-md space-y-4">
+        <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 md:p-6 mb-6 shadow-xl backdrop-blur-md space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
             
             {/* Search Input */}
@@ -539,7 +698,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
             </div>
 
             {/* Year Dropdown */}
-            <div className="md:col-span-2">
+            <div className="md:col-span-3">
               <select
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(e.target.value)}
@@ -552,7 +711,7 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
             </div>
 
             {/* Memory Type Dropdown */}
-            <div className="md:col-span-3">
+            <div className="md:col-span-4">
               <select
                 value={selectedMemoryType}
                 onChange={(e) => setSelectedMemoryType(e.target.value)}
@@ -564,34 +723,52 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
               </select>
             </div>
 
-            {/* Media Type Filter Pills */}
-            <div className="md:col-span-2 flex items-center justify-end gap-1 bg-slate-950 p-1 rounded-xl border border-white/5">
-              <button
-                onClick={() => setSelectedMediaType('all')}
-                className={`flex-1 py-1.5 px-2 text-[10px] font-bold uppercase rounded-lg transition-all cursor-pointer ${
-                  selectedMediaType === 'all' ? 'bg-amber-400 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => setSelectedMediaType('image')}
-                className={`flex-1 py-1.5 px-2 text-[10px] font-bold uppercase rounded-lg transition-all cursor-pointer ${
-                  selectedMediaType === 'image' ? 'bg-amber-400 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Photos
-              </button>
-              <button
-                onClick={() => setSelectedMediaType('video')}
-                className={`flex-1 py-1.5 px-2 text-[10px] font-bold uppercase rounded-lg transition-all cursor-pointer ${
-                  selectedMediaType === 'video' ? 'bg-amber-400 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Videos
-              </button>
-            </div>
+          </div>
+        </div>
 
+        {/* Sticky Filter Bar (All / Photos / Videos) */}
+        <div className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-xl border-y border-white/10 py-3 px-4 -mx-4 sm:mx-0 sm:rounded-2xl shadow-2xl mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedMediaType('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 ${
+                selectedMediaType === 'all'
+                  ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 scale-105'
+                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>All ({memories.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMediaType('image')}
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 ${
+                selectedMediaType === 'image'
+                  ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20 scale-105'
+                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Photos ({memories.filter(m => m.mediaType === 'image').length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMediaType('video')}
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 ${
+                selectedMediaType === 'video'
+                  ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20 scale-105'
+                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              <Film className="w-3.5 h-3.5 text-purple-300" />
+              <span>Videos ({memories.filter(m => m.mediaType === 'video').length})</span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-400 font-mono hidden sm:block">
+            Showing <span className="text-white font-bold">{filteredMemories.length}</span> {selectedMediaType === 'image' ? 'Photos' : selectedMediaType === 'video' ? 'Videos' : 'Memories'}
           </div>
         </div>
 
@@ -619,42 +796,67 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                 onClick={() => setSelectedItem(item)}
                 className="group relative bg-slate-900/90 border border-white/10 rounded-2xl overflow-hidden hover:border-amber-400/50 transition-all duration-300 cursor-pointer shadow-xl flex flex-col"
               >
-                {/* Media Frame Container (Fills out card completely) */}
+                {/* Media Frame Container */}
                 <div className="relative aspect-[16/10] w-full bg-slate-950 overflow-hidden border-b border-white/5">
                   {item.mediaType === 'video' ? (
                     <div className="relative w-full h-full">
-                      <video
-                        src={item.mediaUrl}
-                        poster={item.thumbnailUrl || getCloudinaryThumbnail(item.mediaUrl)}
-                        muted
-                        loop
-                        playsInline
-                        className="ceremony-video-item w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      {/* Video Thumbnail (Static image, no autoplay in grid) */}
+                      <img
+                        src={item.thumbnailUrl || getCloudinaryThumbnail(item.mediaUrl) || 'https://images.unsplash.com/photo-1517486808906-6ca8b3f04846?auto=format&fit=crop&q=80&w=800'}
+                        alt={item.caption || item.title}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        referrerPolicy="no-referrer"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-black/20 to-transparent group-hover:via-black/10 transition-colors flex items-center justify-center pointer-events-none">
-                        <div className="w-12 h-12 rounded-full bg-amber-400/90 text-slate-950 flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
-                          <Play className="w-6 h-6 fill-current ml-0.5" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-black/20 to-transparent group-hover:via-black/10 transition-colors flex items-center justify-center">
+                        <div className="w-14 h-14 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center shadow-2xl group-hover:scale-110 transition-transform">
+                          <Play className="w-7 h-7 fill-current ml-0.5" />
                         </div>
+                      </div>
+
+                      {/* Video Badge (Top Left) */}
+                      <div className="absolute top-3 left-3 z-10 pointer-events-none">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-purple-950/90 backdrop-blur-md text-purple-300 border border-purple-400/30 shadow-lg flex items-center gap-1.5">
+                          <Film className="w-3.5 h-3.5 text-purple-400" />
+                          <span>VIDEO</span>
+                        </span>
+                      </div>
+
+                      {/* Video Duration Badge (Bottom Right) */}
+                      <div className="absolute bottom-3 right-3 z-10 pointer-events-none">
+                        <span className="px-2.5 py-1 rounded-md text-[10px] font-mono font-bold bg-slate-950/90 backdrop-blur-md text-slate-200 border border-white/10 shadow-lg flex items-center gap-1">
+                          <Film className="w-3 h-3 text-purple-400" />
+                          <span>0:30</span>
+                        </span>
                       </div>
                     </div>
                   ) : (
-                    <img
-                      src={getOptimizedImageUrl(item.mediaUrl, 800)}
-                      alt={item.caption || item.title}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                      referrerPolicy="no-referrer"
-                    />
+                    <div className="relative w-full h-full">
+                      {/* Photo Image */}
+                      <img
+                        src={getOptimizedImageUrl(item.mediaUrl, 800)}
+                        alt={item.caption || item.title}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        referrerPolicy="no-referrer"
+                      />
+
+                      {/* Photo Badge (Top Left) */}
+                      <div className="absolute top-3 left-3 z-10 pointer-events-none">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-950/90 backdrop-blur-md text-emerald-300 border border-emerald-400/30 shadow-lg flex items-center gap-1.5">
+                          <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>PHOTO</span>
+                        </span>
+                      </div>
+                    </div>
                   )}
 
-                  {/* Top Badges Overlay */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-slate-950/80 backdrop-blur-md text-amber-300 border border-amber-400/20 shadow-md">
+                  {/* Memory Type Tag (Top Right) */}
+                  <div className="absolute top-3 right-3 pointer-events-none z-10">
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-950/80 backdrop-blur-md text-amber-300 border border-amber-400/20 shadow-md">
                       {item.memoryType}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-950/80 backdrop-blur-md text-slate-300 border border-white/10 shadow-md">
-                      {item.graduationYear}
                     </span>
                   </div>
                 </div>
@@ -730,168 +932,192 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
       </div>
 
       {/* ==========================================================
-          UPLOAD MEMORY MODAL FORM
+          UPLOAD MEMORY MODAL FORM (FULL-SCREEN PAGE PORTAL EXPERIENCE)
           ========================================================== */}
-      {isUploadModalOpen && (
+      {isUploadModalOpen && createPortal(
         <div 
-          className="fixed inset-0 z-[999999] bg-slate-950/98 backdrop-blur-3xl flex items-center justify-center p-3 sm:p-6 overflow-hidden animate-in fade-in duration-300"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              closeAndResetModal();
-            }
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100dvh',
+            maxHeight: '-webkit-fill-available',
+            zIndex: 999999,
           }}
+          className="bg-slate-950 text-slate-100 flex flex-col overflow-hidden animate-in fade-in duration-200 inset-0"
         >
-          {/* Main Modal Card */}
-          <div className="bg-slate-900 border border-white/15 rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95)] relative overflow-hidden animate-in slide-in-from-bottom-6 duration-300">
-            
-            {/* 1. STICKY HEADER (Always Visible at Top) */}
-            <div className="shrink-0 bg-slate-900/98 border-b border-white/10 p-4 sm:p-5 flex items-center justify-between gap-3 z-30 shadow-md">
-              {/* Back Button */}
-              <button
-                type="button"
-                onClick={closeAndResetModal}
-                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-amber-400 hover:text-slate-950 text-slate-200 transition-all cursor-pointer flex items-center gap-2 text-xs font-bold shrink-0 border border-white/10 group"
-              >
-                <ArrowLeft className="w-4 h-4 text-amber-400 group-hover:text-slate-950 transition-colors" />
-                <span>Back</span>
-              </button>
+          {/* 1. STICKY TOP HEADER OF UPLOAD PAGE */}
+          <div 
+            style={{
+              paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))'
+            }}
+            className="shrink-0 bg-slate-900 border-b border-white/10 px-4 py-3 sm:px-6 flex items-center justify-between gap-3 shadow-md z-30"
+          >
+            {/* Top Left: Back to Gallery */}
+            <button
+              type="button"
+              onClick={closeAndResetModal}
+              className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl bg-white/5 hover:bg-amber-400 hover:text-slate-950 text-slate-200 transition-all cursor-pointer flex items-center gap-2 text-xs font-bold shrink-0 border border-white/10 group"
+            >
+              <ArrowLeft className="w-4 h-4 text-amber-400 group-hover:text-slate-950 transition-colors" />
+              <span className="hidden sm:inline">Back to Gallery</span>
+              <span className="sm:hidden">Back</span>
+            </button>
 
-              {/* Title & Icon */}
-              <div className="text-center min-w-0 px-2">
-                <h3 className="text-sm sm:text-lg font-black text-white flex items-center justify-center gap-2 truncate font-display">
-                  <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" />
-                  <span className="truncate">Upload Graduation Memory</span>
-                </h3>
-                <p className="text-[10px] sm:text-xs text-slate-400 truncate hidden sm:block">
-                  Share photos or videos with the school memory archive
-                </p>
-              </div>
-
-              {/* Close Button */}
-              <button
-                type="button"
-                onClick={closeAndResetModal}
-                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-red-500 hover:text-white text-slate-200 transition-all cursor-pointer flex items-center gap-2 text-xs font-bold shrink-0 border border-white/10 group"
-                title="Close form"
-              >
-                <span className="hidden sm:inline">Close</span>
-                <X className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
-              </button>
+            {/* Center: Title */}
+            <div className="text-center min-w-0 px-2">
+              <h2 className="text-xs sm:text-base font-black text-white flex items-center justify-center gap-2 truncate font-display">
+                <Camera className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" />
+                <span className="truncate">Upload Graduation Memory</span>
+              </h2>
             </div>
 
-            {/* 2. SCROLLABLE FORM BODY (Always starts at top scroll position 0) */}
-            <div 
-              ref={modalBodyRef}
-              className="flex-1 overflow-y-auto p-4 sm:p-7 space-y-5 text-left custom-scrollbar"
+            {/* Top Right: Close Icon */}
+            <button
+              type="button"
+              onClick={closeAndResetModal}
+              className="p-1.5 sm:p-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-all cursor-pointer shrink-0 border border-white/10"
+              title="Close form"
             >
-              {uploadError && (
-                <div className="p-3.5 bg-red-950/80 border border-red-500/40 text-red-200 text-xs rounded-2xl flex items-center gap-2.5">
-                  <X className="w-4 h-4 shrink-0 text-red-400" />
-                  <span>{uploadError}</span>
-                </div>
-              )}
+              <X className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          </div>
 
-              <form id="graduation-upload-form" onSubmit={handleUploadSubmit} className="space-y-5">
-                
-                {/* Who are you? Dropdown & Graduation Year Dropdown */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1 text-left">
-                    <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                      Who are you?
-                    </label>
-                    <select
-                      value={uploadRole}
-                      onChange={(e) => setUploadRole(e.target.value)}
-                      className="w-full p-3.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
-                    >
-                      {UPLOADER_TYPES.map(r => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                  </div>
+          {/* 2. SCROLLABLE FORM BODY */}
+          <div 
+            ref={modalBodyRef}
+            className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-2xl mx-auto w-full space-y-5 custom-scrollbar overscroll-contain"
+          >
+            {uploadError && (
+              <div className="p-3.5 bg-red-950/90 border border-red-500/40 text-red-200 text-xs rounded-2xl flex items-center gap-2.5 shadow-md">
+                <X className="w-4 h-4 shrink-0 text-red-400" />
+                <span>{uploadError}</span>
+              </div>
+            )}
 
-                  <div className="space-y-1 text-left">
-                    <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                      Graduation Year
-                    </label>
-                    <select
-                      value={uploadYear}
-                      onChange={(e) => setUploadYear(e.target.value)}
-                      className="w-full p-3.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
-                    >
-                      {GRAD_YEARS.filter(y => y !== 'All Years').map(y => (
-                        <option key={y} value={y}>{y}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Memory Type Dropdown */}
+            <form id="graduation-upload-form" onSubmit={handleUploadSubmit} className="space-y-5">
+              
+              {/* Who are you? Dropdown & Graduation Year Dropdown */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1 text-left">
                   <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                    Memory Category
+                    Who are you?
                   </label>
                   <select
-                    value={uploadType}
-                    onChange={(e) => setUploadType(e.target.value)}
-                    className="w-full p-3.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
+                    value={uploadRole}
+                    onChange={(e) => setUploadRole(e.target.value)}
+                    className="w-full p-3.5 rounded-xl bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
                   >
-                    {MEMORY_TYPES.filter(m => m !== 'All Types').map(mt => (
-                      <option key={mt} value={mt}>{mt}</option>
+                    {UPLOADER_TYPES.map(r => (
+                      <option key={r} value={r}>{r}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Upload Files Drop Area */}
-                <div className="space-y-2 text-left">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                      Upload Files <span className="text-amber-400 font-normal">(Multiple Files Supported)</span>
-                    </label>
-                    {selectedFiles.length > 0 && (
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {selectedFiles.length} file(s) selected
-                      </span>
-                    )}
-                  </div>
-
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
-                    multiple
-                    className="hidden"
-                  />
-
-                  {/* Drop Zone Box */}
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-6 sm:p-8 border-2 border-dashed border-white/15 rounded-2xl hover:border-amber-400/50 bg-slate-950/70 transition-all cursor-pointer text-center space-y-2.5 group"
+                <div className="space-y-1 text-left">
+                  <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
+                    Graduation Year
+                  </label>
+                  <select
+                    value={uploadYear}
+                    onChange={(e) => setUploadYear(e.target.value)}
+                    className="w-full p-3.5 rounded-xl bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
                   >
-                    <UploadCloud className="w-9 h-9 text-slate-500 group-hover:text-amber-400 transition-colors mx-auto" />
-                    <p className="text-xs sm:text-sm text-slate-200 font-bold">
-                      Click or drag to add photos or video clips
-                    </p>
-                    <p className="text-[10px] sm:text-xs text-slate-400 tracking-wide">
-                      Supported Formats: JPG, JPEG, PNG, WEBP, MP4, MOV, WEBM
-                    </p>
-                  </div>
+                    {GRAD_YEARS.filter(y => y !== 'All Years').map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-                  {/* Selected File List / Previews */}
+              {/* Memory Category Dropdown */}
+              <div className="space-y-1 text-left">
+                <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
+                  Memory Category
+                </label>
+                <select
+                  value={uploadType}
+                  onChange={(e) => setUploadType(e.target.value)}
+                  className="w-full p-3.5 rounded-xl bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400 font-medium cursor-pointer"
+                >
+                  {MEMORY_TYPES.filter(m => m !== 'All Types').map(mt => (
+                    <option key={mt} value={mt}>{mt}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Upload Files Drop Area */}
+              <div className="space-y-2 text-left">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
+                    Upload Files <span className="text-amber-400 font-normal">(Multiple Files Supported)</span>
+                  </label>
                   {selectedFiles.length > 0 && (
-                    <div className="space-y-2 pt-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
-                      <p className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">
-                        Selected Files ({selectedFiles.filter(f => f.mediaType === 'image').length} Image / {selectedFiles.filter(f => f.mediaType === 'video').length} Video)
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
-                        {selectedFiles.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-950 border border-white/10 group hover:border-white/20 transition-all"
-                          >
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {selectedFiles.length} file(s) selected
+                    </span>
+                  )}
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+                  multiple
+                  className="hidden"
+                />
+
+                {/* Drop Zone Box (Supports drag-and-drop & multi-select) */}
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                      handleFilesAdded(Array.from(e.dataTransfer.files));
+                    }
+                  }}
+                  className={`p-6 sm:p-8 border-2 border-dashed rounded-2xl transition-all cursor-pointer text-center space-y-2.5 group ${
+                    isDragging ? 'border-amber-400 bg-amber-500/10' : 'border-white/20 hover:border-amber-400/60 bg-slate-900/60'
+                  }`}
+                >
+                  <UploadCloud className={`w-9 h-9 transition-colors mx-auto ${isDragging ? 'text-amber-400 animate-bounce' : 'text-slate-400 group-hover:text-amber-400'}`} />
+                  <p className="text-xs sm:text-sm text-slate-200 font-bold">
+                    Click or drag to add photos or video clips
+                  </p>
+                  <p className="text-[10px] sm:text-xs text-slate-400 tracking-wide">
+                    Max 20 images (JPG, PNG, WEBP) & 5 videos (MP4, MOV, WEBM)
+                  </p>
+                </div>
+
+                {/* Selected File List / Previews */}
+                {selectedFiles.length > 0 && (
+                  <div className="space-y-2 pt-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+                    <p className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">
+                      Selected Files ({selectedFiles.filter(f => f.mediaType === 'image').length} / 20 Images, {selectedFiles.filter(f => f.mediaType === 'video').length} / 5 Videos)
+                    </p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {selectedFiles.map((item) => (
+                        <div
+                          key={item.id}
+                          className={`p-2.5 rounded-xl bg-slate-900 border space-y-2 transition-all ${
+                            item.status === 'error'
+                              ? 'border-red-500/40 bg-red-950/10'
+                              : item.status === 'completed'
+                              ? 'border-emerald-500/40 bg-emerald-950/10'
+                              : 'border-white/10 group hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
                             {/* Mini Thumbnail */}
-                            <div className="w-12 h-12 rounded-lg bg-slate-900 overflow-hidden shrink-0 relative flex items-center justify-center border border-white/5">
+                            <div className="w-12 h-12 rounded-lg bg-slate-950 overflow-hidden shrink-0 relative flex items-center justify-center border border-white/5">
                               {item.mediaType === 'video' ? (
                                 <div className="w-full h-full flex items-center justify-center bg-purple-950/50 text-purple-400">
                                   <Video className="w-5 h-5" />
@@ -905,84 +1131,145 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                               )}
                             </div>
 
-                            {/* File Details & Auto-detected Badge */}
+                            {/* File Details & Status Badge */}
                             <div className="flex-1 min-w-0 text-left">
                               <p className="text-xs font-medium text-white truncate">{item.file.name}</p>
-                              <div className="flex items-center gap-2 mt-0.5">
+                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                 <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
                                   item.mediaType === 'video'
                                     ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                                     : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                 }`}>
-                                  Auto Detected: {item.mediaType === 'video' ? 'Video' : 'Image'}
+                                  {item.mediaType === 'video' ? 'Video' : 'Image'}
                                 </span>
                                 <span className="text-[10px] text-slate-500 font-mono">{item.sizeText}</span>
+
+                                {item.status === 'completed' && (
+                                  <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                    <CheckCircle2 className="w-3 h-3" /> Uploaded
+                                  </span>
+                                )}
+                                {item.status === 'uploading' && (
+                                  <span className="flex items-center gap-1 text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                    <Loader2 className="w-3 h-3 animate-spin" /> {item.progressPercent}%
+                                  </span>
+                                )}
+                                {item.status === 'error' && (
+                                  <span className="flex items-center gap-1 text-[9px] font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">
+                                    Failed
+                                  </span>
+                                )}
                               </div>
                             </div>
 
-                            {/* Remove Button */}
-                            <button
-                              type="button"
-                              onClick={() => removeSelectedFile(item.id)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer shrink-0"
-                              title="Remove file"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
+                            {/* Action Buttons: Retry / Remove */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              {item.status === 'error' && (
+                                <button
+                                  type="button"
+                                  onClick={() => retrySingleFile(item)}
+                                  disabled={uploading}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/30 transition-colors cursor-pointer"
+                                  title="Retry uploading this file"
+                                >
+                                  <RotateCcw className="w-3 h-3" /> Retry
+                                </button>
+                              )}
+                              {item.status !== 'uploading' && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeSelectedFile(item.id)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer shrink-0"
+                                  title="Remove file"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        ))}
-                      </div>
+
+                          {/* Per-File Progress Bar */}
+                          {item.status === 'uploading' && (
+                            <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-amber-400 h-full transition-all duration-200"
+                                style={{ width: `${item.progressPercent}%` }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Per-File Error Detail */}
+                          {item.status === 'error' && item.errorMsg && (
+                            <p className="text-[10px] text-red-400 text-left font-medium">
+                              {item.errorMsg}
+                            </p>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
+              </div>
 
-                {/* Contributor Name */}
-                <div className="space-y-1 text-left">
-                  <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                    Uploader Name (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={uploadName}
-                    onChange={(e) => setUploadName(e.target.value)}
-                    placeholder="e.g. Mr. & Mrs. Johnson / Sarah Andrews"
-                    className="w-full p-3.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 font-medium"
-                  />
-                </div>
+              {/* Contributor Name */}
+              <div className="space-y-1 text-left">
+                <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
+                  Uploader Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={uploadName}
+                  onChange={(e) => setUploadName(e.target.value)}
+                  placeholder="e.g. Mr. & Mrs. Johnson / Sarah Andrews"
+                  className="w-full p-3.5 rounded-xl bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400 font-medium"
+                />
+              </div>
 
-                {/* Caption */}
-                <div className="space-y-1 text-left">
-                  <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
-                    Caption / Story
-                  </label>
-                  <textarea
-                    required
-                    rows={3}
-                    value={uploadCaption}
-                    onChange={(e) => setUploadCaption(e.target.value)}
-                    placeholder="Our family celebrating after receiving the graduation certificate."
-                    className="w-full p-3.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 resize-none font-medium leading-relaxed"
-                  />
-                  <p className="text-[10px] text-slate-500 italic text-left">
-                    Provide a brief description of what was happening in these photos or videos.
-                  </p>
-                </div>
+              {/* Caption */}
+              <div className="space-y-1 text-left pb-4">
+                <label className="text-[11px] font-extrabold uppercase tracking-widest text-slate-300 block">
+                  Caption / Story
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={uploadCaption}
+                  onChange={(e) => setUploadCaption(e.target.value)}
+                  placeholder="Our family celebrating after receiving the graduation certificate."
+                  className="w-full p-3.5 rounded-xl bg-slate-900 border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400 resize-none font-medium leading-relaxed"
+                />
+                <p className="text-[10px] text-slate-400 italic text-left">
+                  Provide a brief description of what was happening in these photos or videos.
+                </p>
+              </div>
 
-              </form>
-            </div>
+            </form>
+          </div>
 
-            {/* 3. STICKY FOOTER (Always Visible Submit Action) */}
-            <div className="shrink-0 p-4 sm:p-5 bg-slate-900/98 border-t border-white/10 z-30 shadow-lg space-y-3">
+          {/* 3. STICKY FOOTER WITH SAFE-AREA INSET */}
+          <div 
+            style={{
+              paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+            }}
+            className="shrink-0 p-4 sm:px-6 bg-slate-900 border-t border-white/10 shadow-2xl space-y-3 w-full z-30"
+          >
+            <div className="max-w-2xl mx-auto w-full space-y-3">
               {uploading && (
                 <div className="p-3 bg-slate-950 border border-amber-500/30 rounded-xl space-y-1.5 text-left">
                   <div className="flex items-center justify-between text-xs text-amber-300 font-bold">
-                    <span className="truncate">{uploadProgressText || 'Uploading memories...'}</span>
-                    <span>{uploadProgressPercent}%</span>
+                    <span className="truncate">
+                      {uploadProgressText || `Uploading queue (${selectedFiles.filter(f => f.status === 'completed').length}/${selectedFiles.length} finished)...`}
+                    </span>
+                    <span>
+                      {Math.round(selectedFiles.reduce((acc, f) => acc + (f.status === 'completed' ? 100 : (f.progressPercent || 0)), 0) / (selectedFiles.length || 1))}%
+                    </span>
                   </div>
                   <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-300 rounded-full"
-                      style={{ width: `${uploadProgressPercent}%` }}
+                      style={{
+                        width: `${Math.round(selectedFiles.reduce((acc, f) => acc + (f.status === 'completed' ? 100 : (f.progressPercent || 0)), 0) / (selectedFiles.length || 1))}%`
+                      }}
                     />
                   </div>
                 </div>
@@ -992,12 +1279,19 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                 type="submit"
                 form="graduation-upload-form"
                 disabled={uploading || selectedFiles.length === 0}
-                className="w-full py-4 rounded-xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-widest hover:brightness-110 active:scale-[0.99] transition-all cursor-pointer shadow-xl flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:cursor-not-allowed border border-amber-300/40"
+                className="w-full py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-widest hover:brightness-110 active:scale-[0.99] transition-all cursor-pointer shadow-xl flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:cursor-not-allowed border border-amber-300/40"
               >
                 {uploading ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Submitting ({uploadProgressPercent}%)...</span>
+                    <span>
+                      Uploading Queue ({selectedFiles.filter(f => f.status === 'completed').length}/{selectedFiles.length})...
+                    </span>
+                  </>
+                ) : selectedFiles.some(f => f.status === 'error') ? (
+                  <>
+                    <RotateCcw className="w-5 h-5" />
+                    <span>Retry Failed Uploads</span>
                   </>
                 ) : (
                   <>
@@ -1011,14 +1305,15 @@ export default function GraduationCeremonyGallery({ onClose }: GraduationCeremon
                 )}
               </button>
             </div>
-
           </div>
-        </div>
+
+        </div>,
+        document.body
       )}
       </div>
 
       {/* ==========================================================
-          FACEBOOK & TIKTOK REELS STYLE MEDIA VIEWER
+          FULLSCREEN PHOTO & REELS MEDIA VIEWER
           ========================================================== */}
       {selectedItem && (
         <GraduationReelsViewer

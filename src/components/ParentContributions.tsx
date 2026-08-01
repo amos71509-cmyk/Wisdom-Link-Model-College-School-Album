@@ -566,7 +566,7 @@ export default function ParentContributions({
                   <img
                     src={cont.photoUrl}
                     alt={cont.event}
-                    className="w-full h-full object-contain bg-slate-950 p-1 transition-transform duration-500 group-hover:scale-105"
+                    className="w-full h-full object-cover object-center transition-transform duration-500 group-hover:scale-105"
                     referrerPolicy="no-referrer"
                   />
                 )}

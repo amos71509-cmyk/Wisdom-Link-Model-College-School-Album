@@ -308,10 +308,17 @@ export function PrincipalHonourSection({ onCommentSubmitted }: PrincipalProps) {
           <div className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-[var(--primary)] to-[var(--accent)] opacity-[0.08] blur-xl" />
           
           <div className="relative w-full max-w-md rounded-2xl overflow-hidden border border-gray-200/60 shadow-2xl bg-slate-950 group h-[440px] sm:h-[540px]">
+            {/* Ambient Blurred Background to fill frame smoothly */}
+            <img 
+              src={getOptimizedImageUrl(principal.image, 1000)} 
+              alt="" 
+              className="absolute inset-0 w-full h-full object-cover filter blur-2xl opacity-40 scale-110 pointer-events-none"
+              aria-hidden="true"
+            />
             <img 
               src={getOptimizedImageUrl(principal.image, 1000)} 
               alt={principal.name} 
-              className="absolute inset-0 w-full h-full object-cover filter saturate-[0.98] group-hover:scale-105 transition-transform duration-700"
+              className="relative z-0 w-full h-full object-cover object-top filter saturate-[0.98] group-hover:scale-105 transition-transform duration-700"
               referrerPolicy="no-referrer"
             />
             {/* Subtle vignette overlay */}
@@ -514,7 +521,7 @@ export function TeachersHonourSection({ onCommentSubmitted }: { onCommentSubmitt
                     <img 
                       src={getOptimizedImageUrl(teacher.image, 500)} 
                       alt={teacher.name} 
-                      className="w-full h-full object-contain bg-slate-950 p-1 group-hover:scale-102 transition-transform duration-500"
+                      className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
                     

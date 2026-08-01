@@ -344,9 +344,9 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
                   <div className="space-y-2">
                     <div className="relative aspect-video w-full bg-slate-900 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center p-1">
                       {item.mediaType === 'video' ? (
-                        <video src={item.mediaUrl} controls className="w-full h-full object-contain" />
+                        <video src={item.mediaUrl} controls className="w-full h-full object-cover object-center" />
                       ) : (
-                        <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-cover object-center" referrerPolicy="no-referrer" />
                       )}
                       <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-amber-500 text-slate-950">
                         {item.memoryType}
@@ -417,7 +417,7 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
                           className="w-full h-full object-contain"
                         />
                       ) : (
-                        <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-cover object-center" referrerPolicy="no-referrer" />
                       )}
                       <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-emerald-500 text-slate-950">
                         {item.memoryType}
@@ -485,7 +485,7 @@ export default function AdminGraduationCeremonyCMS({ triggerFeedback }: AdminGra
               {filterList(rejectedMemories).map((item, idx) => (
                 <div key={item.id ? `${item.id}-${idx}` : `rejected-${idx}`} className="bg-slate-950 border border-red-500/20 rounded-2xl p-4 space-y-3 shadow-xl">
                   <div className="relative aspect-video w-full bg-slate-900 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center p-1">
-                    <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    <img src={item.mediaUrl} alt={item.caption} className="w-full h-full object-cover object-center" referrerPolicy="no-referrer" />
                   </div>
                   <p className="text-xs text-slate-300 font-medium">"{item.caption}"</p>
                   <div className="flex items-center gap-2 pt-2 border-t border-white/10">

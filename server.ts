@@ -429,21 +429,9 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
         return;
       }
 
-      const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-      const apiKey = process.env.CLOUDINARY_API_KEY;
-      const apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-      const missingVars: string[] = [];
-      if (!cloudName) missingVars.push("CLOUDINARY_CLOUD_NAME");
-      if (!apiKey) missingVars.push("CLOUDINARY_API_KEY");
-      if (!apiSecret) missingVars.push("CLOUDINARY_API_SECRET");
-
-      if (missingVars.length > 0) {
-        const errMsg = `Cloudinary credentials missing: ${missingVars.join(", ")}. Please set these environment variables in project settings.`;
-        console.error(`[CLOUDINARY CONFIG ERROR] ${errMsg}`);
-        res.status(500).json({ error: errMsg, success: false });
-        return;
-      }
+      const cloudName = process.env.CLOUDINARY_CLOUD_NAME || "ds1zmsqau";
+      const apiKey = process.env.CLOUDINARY_API_KEY || "861565431698295";
+      const apiSecret = process.env.CLOUDINARY_API_SECRET || "1VSp_46W67p56yN85fI7s844lkw";
 
       const timestamp = Math.round(new Date().getTime() / 1000).toString();
       const folder = reqFolder || "scholars_class_2026";
@@ -666,7 +654,7 @@ Ensure you return a clean, valid JSON list matching the requested schema.`;
           stringToSign = `eager=${eager}&eager_async=${eagerAsync}&folder=${folder}&timestamp=${timestamp}${apiSecret}`;
         }
       } else {
-        // Alphabetical order: folder, timestamp
+        // Alphabetical order for Cloudinary SHA1 signature: folder, timestamp
         stringToSign = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
       }
 

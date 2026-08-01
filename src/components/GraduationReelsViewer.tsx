@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { 
   X, Heart, MessageSquare, Share2, Download, 
   Volume2, VolumeX, Play, Pause, Maximize, Minimize, ZoomIn, ZoomOut, 
-  RotateCcw, Send, CheckCircle2, Loader2, Copy, Check, Sparkles, Award, ArrowLeft
+  RotateCcw, Send, CheckCircle2, Loader2, Copy, Check, Sparkles, Award, ArrowLeft,
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Film, Image as ImageIcon
 } from 'lucide-react';
 import { GraduationMemory, GraduationMemoryComment } from '../types';
 import { 
@@ -25,12 +26,21 @@ export default function GraduationReelsViewer({
   initialItem,
   onClose
 }: GraduationReelsViewerProps) {
+  // Requirement 3 & 4: Strict media queue isolation so photos only show photos and videos only show videos
+  const mediaQueue = React.useMemo(() => {
+    const queue = items.filter(i => i.mediaType === initialItem.mediaType);
+    return queue.length > 0 ? queue : [initialItem];
+  }, [items, initialItem]);
+
+  const isPhotoMode = initialItem.mediaType === 'image';
+  const isVideoMode = initialItem.mediaType === 'video';
+
   // Navigation State
   const [currentIndex, setCurrentIndex] = useState(() => {
-    const idx = items.findIndex(i => i.id === initialItem.id);
+    const idx = mediaQueue.findIndex(i => i.id === initialItem.id);
     return idx !== -1 ? idx : 0;
   });
-  const activeItem = items[currentIndex] || initialItem;
+  const activeItem = mediaQueue[currentIndex] || initialItem;
 
   // Real-time Likes & Comments
   const [likesCount, setLikesCount] = useState(activeItem.likesCount || 0);
@@ -54,7 +64,7 @@ export default function GraduationReelsViewer({
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreenVideo, setIsFullscreenVideo] = useState(false);
-  const [isFitMode, setIsFitMode] = useState(true); // true = object-contain (default TikTok/Reels fit), false = object-cover
+  const [isFitMode, setIsFitMode] = useState(true); // true = object-contain, false = object-cover
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const startControlsTimer = React.useCallback(() => {
@@ -85,13 +95,12 @@ export default function GraduationReelsViewer({
   const initialZoomLevelRef = useRef<number>(1);
   const wheelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Requirement 1 & 2: Lock body scroll when fullscreen viewer opens so returning restores exact position
+  // Lock body scroll when fullscreen viewer opens so returning restores exact position
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     document.body.classList.add('reels-viewer-active');
 
-    // Also freeze any scrolling gallery containers underneath so scroll position never shifts
     const galleryScrollContainers = document.querySelectorAll('.overflow-y-auto');
     const savedOverflows: { el: HTMLElement; overflow: string }[] = [];
     galleryScrollContainers.forEach(el => {
@@ -116,14 +125,14 @@ export default function GraduationReelsViewer({
     setShowShareMenu(false);
     startControlsTimer();
     
-    // Requirement 4: Auto-play active video and reset currentTime
+    // Auto-play active video and reset currentTime
     if (activeItem.mediaType === 'video' && videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
-  }, [currentIndex, activeItem.id, startControlsTimer]);
+  }, [currentIndex, activeItem.id, activeItem.mediaType, startControlsTimer]);
 
-  // Requirement 5: Auto-hide controls timer effect when playing
+  // Auto-hide controls timer effect when playing
   useEffect(() => {
     if (isPlaying) {
       startControlsTimer();
@@ -159,21 +168,20 @@ export default function GraduationReelsViewer({
     };
   }, [activeItem.id]);
 
-  // Requirement 9: Performance - Preload next and previous media
+  // Performance - Preload next and previous media
   useEffect(() => {
-    if (items.length <= 1) return;
+    if (mediaQueue.length <= 1) return;
 
-    const total = items.length;
+    const total = mediaQueue.length;
     const prevIdx = (currentIndex - 1 + total) % total;
     const nextIdx = (currentIndex + 1) % total;
-    const next2Idx = (currentIndex + 2) % total;
 
-    [items[prevIdx], items[nextIdx], items[next2Idx]].forEach(item => {
+    [mediaQueue[prevIdx], mediaQueue[nextIdx]].forEach(item => {
       if (item && item.mediaType === 'image' && item.mediaUrl) {
         preloadImage(getOptimizedImageUrl(item.mediaUrl, 1600));
       }
     });
-  }, [currentIndex, items]);
+  }, [currentIndex, mediaQueue]);
 
   // Keyboard navigation & Esc to close
   useEffect(() => {
@@ -187,12 +195,12 @@ export default function GraduationReelsViewer({
         } else {
           onClose();
         }
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+      } else if (e.key === 'ArrowRight' || (isPhotoMode && e.key === 'ArrowDown') || e.key === 'PageDown' || e.key === ' ') {
         if (!isCommentsOpen && zoomLevel === 1) {
           e.preventDefault();
           handleNext();
         }
-      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      } else if (e.key === 'ArrowLeft' || (isPhotoMode && e.key === 'ArrowUp') || e.key === 'PageUp') {
         if (!isCommentsOpen && zoomLevel === 1) {
           e.preventDefault();
           handlePrev();
@@ -201,29 +209,31 @@ export default function GraduationReelsViewer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, items.length, isCommentsOpen, zoomLevel, onClose]);
+  }, [currentIndex, mediaQueue.length, isCommentsOpen, zoomLevel, isPhotoMode, onClose]);
 
-  // Navigation handlers (Requirement 3: Vertical Reels Scrolling)
+  // Navigation handlers
   const handleNext = () => {
-    if (items.length <= 1) return;
-    setCurrentIndex(prev => (prev + 1) % items.length);
+    if (mediaQueue.length <= 1) return;
+    setCurrentIndex(prev => (prev + 1) % mediaQueue.length);
   };
 
   const handlePrev = () => {
-    if (items.length <= 1) return;
-    setCurrentIndex(prev => (prev - 1 + items.length) % items.length);
+    if (mediaQueue.length <= 1) return;
+    setCurrentIndex(prev => (prev - 1 + mediaQueue.length) % mediaQueue.length);
   };
 
-  // Mouse Wheel navigation (Vertical Reel Feed)
+  // Mouse Wheel navigation
   const handleWheel = (e: React.WheelEvent) => {
     if (isCommentsOpen || zoomLevel > 1) return;
     
-    if (wheelTimeoutRef.current) return; // Debounce wheel
-    if (Math.abs(e.deltaY) > 15) {
-      if (e.deltaY > 0) {
-        handleNext(); // Scroll downward -> Next Media
+    if (wheelTimeoutRef.current) return;
+    const delta = isPhotoMode ? (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) : e.deltaY;
+
+    if (Math.abs(delta) > 15) {
+      if (delta > 0) {
+        handleNext();
       } else {
-        handlePrev(); // Scroll upward -> Previous Media
+        handlePrev();
       }
       wheelTimeoutRef.current = setTimeout(() => {
         wheelTimeoutRef.current = null;
@@ -231,7 +241,7 @@ export default function GraduationReelsViewer({
     }
   };
 
-  // Touch Swipe & Pinch-to-Zoom Navigation (Requirement 3 & 8)
+  // Touch Swipe Navigation (Requirement 3: Horizontal for Photo, Requirement 4: Vertical for Video)
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       const dist = Math.hypot(
@@ -283,12 +293,23 @@ export default function GraduationReelsViewer({
       const deltaY = e.changedTouches[0].clientY - touchStartYRef.current;
       const deltaX = e.changedTouches[0].clientX - touchStartXRef.current;
 
-      // Ensure vertical swipe is dominant over horizontal (Reels style up/down)
-      if (Math.abs(deltaY) > 40 && Math.abs(deltaY) > Math.abs(deltaX) * 1.1) {
-        if (deltaY < 0) {
-          handleNext(); // Swipe Up -> Next Memory
-        } else {
-          handlePrev(); // Swipe Down -> Prev Memory
+      if (isPhotoMode) {
+        // Requirement 3: PHOTO VIEWER - Swipe Left = Next Photo, Swipe Right = Previous Photo
+        if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+          if (deltaX < 0) {
+            handleNext();
+          } else {
+            handlePrev();
+          }
+        }
+      } else {
+        // Requirement 4: VIDEO VIEWER - Swipe Up = Next Video, Swipe Down = Previous Video
+        if (Math.abs(deltaY) > 40 && Math.abs(deltaY) > Math.abs(deltaX)) {
+          if (deltaY < 0) {
+            handleNext();
+          } else {
+            handlePrev();
+          }
         }
       }
     }
@@ -296,181 +317,65 @@ export default function GraduationReelsViewer({
     touchStartXRef.current = null;
   };
 
-  // Double Tap vs Single Tap Detection (Requirement 5 & 8)
+  // Double Tap vs Single Tap Detection
   const handleMediaStageTap = (e: React.MouseEvent) => {
-    if (isCommentsOpen) return;
-    
+    e.stopPropagation();
     const now = Date.now();
-    const timeDiff = now - lastTapTimeRef.current;
+    const doubleTapThreshold = 300;
 
-    if (timeDiff < 300 && timeDiff > 0) {
-      // Double Tap / Double Click Detected!
-      if (tapTimeoutRef.current) {
-        clearTimeout(tapTimeoutRef.current);
-        tapTimeoutRef.current = null;
-      }
+    if (now - lastTapTimeRef.current < doubleTapThreshold) {
+      if (tapTimeoutRef.current) clearTimeout(tapTimeoutRef.current);
       lastTapTimeRef.current = 0;
-      if (activeItem.mediaType === 'image') {
-        // Requirement 8: Double-click / double-tap to zoom on images
-        if (zoomLevel > 1) {
-          setZoomLevel(1);
-          setPanOffset({ x: 0, y: 0 });
-        } else {
-          setZoomLevel(2);
-          setPanOffset({ x: 0, y: 0 });
-        }
-      } else {
-        handleDoubleTapLike();
-      }
+      handleDoubleTapLike();
     } else {
-      // Single Tap Potential -> Wait 300ms
       lastTapTimeRef.current = now;
       tapTimeoutRef.current = setTimeout(() => {
-        handleSingleTap();
-        tapTimeoutRef.current = null;
-      }, 300);
+        if (activeItem.mediaType === 'video') {
+          togglePlayPause();
+        } else {
+          startControlsTimer();
+        }
+      }, doubleTapThreshold);
     }
   };
 
-  const handleSingleTap = () => {
-    if (activeItem.mediaType === 'video') {
-      if (!showControls) {
-        startControlsTimer();
-      } else {
-        togglePlayPause();
-      }
-    } else if (zoomLevel > 1) {
-      // Reset zoom on tap if zoomed
-      setZoomLevel(1);
-      setPanOffset({ x: 0, y: 0 });
-    } else {
-      startControlsTimer();
-    }
-  };
-
-  const handleDoubleTapLike = () => {
-    // Trigger animated heart
+  // Double-tap Like Action
+  const handleDoubleTapLike = async () => {
     setShowFloatingHeart(true);
-    setTimeout(() => setShowFloatingHeart(false), 1000);
-
-    // If not already liked, toggle like
+    setTimeout(() => setShowFloatingHeart(false), 800);
     if (!hasLiked) {
-      handleToggleLike();
+      setHasLiked(true);
+      setLikesCount(prev => prev + 1);
+      await toggleLike(activeItem.id);
     }
   };
 
-  // Toggle Like Handler
-  const handleToggleLike = async () => {
+  // Explicit Like Button Click
+  const handleLikeClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
     const newLikedState = !hasLiked;
     setHasLiked(newLikedState);
     setLikesCount(prev => newLikedState ? prev + 1 : Math.max(0, prev - 1));
-    
-    try {
-      await toggleLike(activeItem.id);
-    } catch (err) {
-      console.error('Like toggle failed:', err);
-    }
+    await toggleLike(activeItem.id);
   };
 
-  // Post Comment Handler
-  const handlePostComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCommentText.trim()) return;
-
-    setCommentSubmitting(true);
-    try {
-      await addGraduationMemoryComment({
-        memoryId: activeItem.id,
-        authorName: newCommentName.trim() || 'Visitor',
-        authorRole: 'Community Member',
-        text: newCommentText.trim()
-      });
-
-      setNewCommentText('');
-      setCommentSubmitting(false);
-      setCommentSuccessNotice(true);
-      setTimeout(() => setCommentSuccessNotice(false), 4500);
-    } catch (err) {
-      console.error(err);
-      setCommentSubmitting(false);
-    }
-  };
-
-  // Share Handler
-  const handleShare = async (platform?: 'whatsapp' | 'twitter' | 'facebook' | 'copy') => {
-    const shareUrl = window.location.href;
-    const shareTitle = `Wisdom Link Graduation Memory: "${activeItem.title || activeItem.caption}"`;
-    const shareText = `${activeItem.caption}\nShared by ${activeItem.uploaderName || activeItem.uploadedByType}`;
-
-    if (!platform && navigator.share) {
-      try {
-        await navigator.share({
-          title: shareTitle,
-          text: shareText,
-          url: shareUrl
-        });
-        return;
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          setShowShareMenu(true);
-        }
-        return;
-      }
-    }
-
-    if (!platform) {
-      setShowShareMenu(prev => !prev);
-      return;
-    }
-
-    if (platform === 'whatsapp') {
-      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText + ' ' + shareUrl)}`, '_blank');
-    } else if (platform === 'twitter') {
-      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`, '_blank');
-    } else if (platform === 'facebook') {
-      window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`, '_blank');
-    } else if (platform === 'copy') {
-      navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2500);
-    }
-    setShowShareMenu(false);
-  };
-
-  // Video Controls Handlers
-  const togglePlayPause = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+  // Video Controls
+  const togglePlayPause = () => {
     if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-    } else {
+    if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
-    }
-  };
-
-  const toggleMute = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (!videoRef.current) return;
-    videoRef.current.muted = !videoRef.current.muted;
-    setIsMuted(videoRef.current.muted);
-  };
-
-  const toggleVideoFullscreen = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    const container = document.getElementById('reels-stage-container');
-    if (!container) return;
-    if (!document.fullscreenElement) {
-      container.requestFullscreen().catch(() => {});
-      setIsFullscreenVideo(true);
     } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreenVideo(false);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
     }
   };
 
-  // Mouse drag panning for zoomed image
+  const toggleMute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsMuted(prev => !prev);
+  };
+
+  // Dragging for Panned Zoomed Images
   const handleMouseDown = (e: React.MouseEvent) => {
     if (zoomLevel > 1) {
       setIsDragging(true);
@@ -480,7 +385,10 @@ export default function GraduationReelsViewer({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDragging && zoomLevel > 1) {
-      setPanOffset({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+      setPanOffset({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
     }
   };
 
@@ -488,9 +396,57 @@ export default function GraduationReelsViewer({
     setIsDragging(false);
   };
 
+  // Comment Submission Handler
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCommentText.trim() || commentSubmitting) return;
+
+    setCommentSubmitting(true);
+    try {
+      await addGraduationMemoryComment({
+        memoryId: activeItem.id,
+        authorName: newCommentName.trim() || 'Graduation Guest',
+        text: newCommentText.trim()
+      });
+      setNewCommentText('');
+      setCommentSuccessNotice(true);
+      setTimeout(() => setCommentSuccessNotice(false), 3000);
+    } catch (err) {
+      console.error('Failed to submit comment:', err);
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
+
+  // Native Share / Copy Link
+  const handleShare = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const shareData = {
+      title: activeItem.title || 'Graduation Memory',
+      text: activeItem.caption || 'Check out this memory from the graduation ceremony!',
+      url: window.location.href
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        setShowShareMenu(true);
+      }
+    } else {
+      setShowShareMenu(true);
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   return createPortal(
     <div 
-      className="fixed inset-0 z-[9999999] w-screen h-screen bg-black text-white m-0 p-0 flex flex-col justify-between overflow-hidden animate-in fade-in duration-300 pointer-events-auto select-none"
+      className="fixed inset-0 z-[999999] bg-black select-none overflow-hidden touch-none flex flex-col font-sans"
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -503,22 +459,85 @@ export default function GraduationReelsViewer({
       onMouseUp={handleMouseUp}
     >
       {/* ==========================================================
-          2. BACK BUTTON (Requirement 3: TOP LEFT ← Back. Nothing else.)
+          TOP HEADER: BACK BUTTON & MEDIA TYPE BADGE
           ========================================================== */}
-      <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-50 pointer-events-auto">
+      <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-50 flex items-center gap-3 pointer-events-auto">
         <button
           type="button"
           onClick={onClose}
           className="px-5 py-2.5 rounded-full bg-black/80 hover:bg-black text-white transition-all cursor-pointer shadow-2xl border border-white/20 flex items-center gap-2 font-bold text-sm active:scale-95 group"
-          title="Back"
+          title="Back to Gallery"
         >
           <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform text-white" />
           <span>Back</span>
         </button>
+
+        {isPhotoMode ? (
+          <span className="px-3.5 py-2 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-950/90 text-emerald-300 border border-emerald-400/30 shadow-2xl flex items-center gap-1.5 backdrop-blur-md">
+            <ImageIcon className="w-4 h-4 text-emerald-400" />
+            <span>PHOTO ({currentIndex + 1} / {mediaQueue.length})</span>
+          </span>
+        ) : (
+          <span className="px-3.5 py-2 rounded-full text-xs font-black uppercase tracking-wider bg-purple-950/90 text-purple-300 border border-purple-400/30 shadow-2xl flex items-center gap-1.5 backdrop-blur-md">
+            <Film className="w-4 h-4 text-purple-400" />
+            <span>VIDEO ({currentIndex + 1} / {mediaQueue.length})</span>
+          </span>
+        )}
       </div>
 
       {/* ==========================================================
-          1. CENTER STAGE: TRUE FULLSCREEN MEDIA DISPLAY (100vw x 100vh)
+          ON-SCREEN NAVIGATION BUTTONS (Requirement 3 & 4)
+          ========================================================== */}
+      {mediaQueue.length > 1 && (
+        <>
+          {isPhotoMode ? (
+            /* PHOTO VIEWER: Left and Right Horizontal Navigation Arrows */
+            <>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handlePrev(); }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 z-40 p-3.5 rounded-full bg-black/70 hover:bg-black text-white border border-white/20 shadow-2xl hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                title="Previous Photo"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleNext(); }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 z-40 p-3.5 rounded-full bg-black/70 hover:bg-black text-white border border-white/20 shadow-2xl hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                title="Next Photo"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            </>
+          ) : (
+            /* VIDEO VIEWER: Up and Down Vertical Navigation Arrows */
+            <>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handlePrev(); }}
+                className="absolute right-4 sm:right-6 top-24 z-40 p-3 rounded-full bg-black/70 hover:bg-black text-white border border-white/20 shadow-2xl hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                title="Previous Video"
+              >
+                <ChevronUp className="w-5 h-5 text-purple-300" />
+                <span className="text-[10px] font-bold font-mono uppercase hidden sm:inline">Prev</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleNext(); }}
+                className="absolute right-4 sm:right-6 bottom-28 z-40 p-3 rounded-full bg-black/70 hover:bg-black text-white border border-white/20 shadow-2xl hover:scale-110 active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                title="Next Video"
+              >
+                <ChevronDown className="w-5 h-5 text-purple-300" />
+                <span className="text-[10px] font-bold font-mono uppercase hidden sm:inline">Next</span>
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ==========================================================
+          CENTER STAGE: FULLSCREEN MEDIA DISPLAY (100vw x 100vh)
           ========================================================== */}
       <div 
         id="reels-stage-container"
@@ -576,7 +595,7 @@ export default function GraduationReelsViewer({
                 className={`w-screen h-screen ${isFitMode ? 'object-contain' : 'object-cover'} shadow-2xl transition-all duration-300`}
               />
 
-              {/* Video Play Overlay Icon ONLY when paused (Requirement 5) */}
+              {/* Video Play Overlay Icon ONLY when paused */}
               {!isPlaying && (
                 <div 
                   onClick={togglePlayPause}
@@ -588,7 +607,7 @@ export default function GraduationReelsViewer({
                 </div>
               )}
 
-              {/* Video Controls Bottom Bar (Requirement 5: Auto-hides after 2s of no interaction) */}
+              {/* Video Controls Bottom Bar */}
               <div 
                 onClick={(e) => e.stopPropagation()}
                 className={`absolute bottom-6 left-4 right-4 sm:left-20 sm:right-28 z-30 bg-black/60 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/15 flex items-center justify-between gap-4 transition-all duration-500 ${showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8 pointer-events-none'}`}
@@ -598,336 +617,273 @@ export default function GraduationReelsViewer({
                   onClick={togglePlayPause}
                   className="text-white hover:text-amber-300 transition-colors cursor-pointer flex items-center gap-2 text-xs font-bold"
                 >
-                  {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-current" />}
                   <span>{isPlaying ? 'Pause' : 'Play'}</span>
                 </button>
 
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); setIsFitMode(prev => !prev); }}
-                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold px-2"
-                    title={isFitMode ? "Fill Entire Screen" : "Fit Original Aspect Ratio"}
-                  >
-                    <span>{isFitMode ? "Fill Screen" : "Fit Screen"}</span>
-                  </button>
-                  <button
-                    type="button"
                     onClick={toggleMute}
-                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                    title={isMuted ? "Unmute Video" : "Mute Video"}
+                    className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                    title={isMuted ? "Unmute" : "Mute"}
                   >
                     {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
                   </button>
+
                   <button
                     type="button"
-                    onClick={toggleVideoFullscreen}
-                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                    title="Toggle Fullscreen"
+                    onClick={() => setIsFitMode(!isFitMode)}
+                    className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer text-[10px] font-mono font-bold uppercase border border-white/10"
+                    title="Toggle Fit/Cover Mode"
                   >
-                    {isFullscreenVideo ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                    {isFitMode ? 'Fit Screen' : 'Fill Screen'}
                   </button>
                 </div>
               </div>
             </div>
           ) : (
-            /* Image Stage with Zoom & Pan (Requirement 8) */
-            <div className="relative w-screen h-screen flex items-center justify-center overflow-hidden">
+            /* PHOTO DISPLAY */
+            <div 
+              className="relative w-screen h-screen flex items-center justify-center transition-transform duration-100"
+              style={{
+                transform: `scale(${zoomLevel}) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
+                cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+              }}
+            >
               <img
                 src={getOptimizedImageUrl(activeItem.mediaUrl, 1600)}
                 alt={activeItem.caption || activeItem.title}
-                style={{
-                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
-                  transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
-                }}
-                className={`w-screen h-screen ${isFitMode ? 'object-contain' : 'object-cover'} shadow-2xl select-none transition-all duration-300 ${
-                  zoomLevel > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'
-                }`}
+                className="max-w-full max-h-full object-contain shadow-2xl pointer-events-none select-none"
                 referrerPolicy="no-referrer"
               />
-
-              {/* Floating Image Zoom Controls (Requirement 5: Auto-hides after 2s of no interaction) */}
-              <div 
-                onClick={(e) => e.stopPropagation()}
-                className={`absolute top-20 right-4 z-30 flex flex-col sm:flex-row items-center gap-1.5 bg-black/60 backdrop-blur-md p-1.5 rounded-2xl border border-white/15 text-white transition-all duration-500 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-              >
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(prev => Math.min(prev + 0.5, 4))}
-                  className="p-2 rounded-xl hover:bg-white/20 text-white transition-colors cursor-pointer"
-                  title="Zoom In"
-                >
-                  <ZoomIn className="w-4 h-4" />
-                </button>
-                <span className="text-[11px] font-mono font-bold px-1">{Math.round(zoomLevel * 100)}%</span>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(prev => Math.max(prev - 0.5, 1))}
-                  className="p-2 rounded-xl hover:bg-white/20 text-white transition-colors cursor-pointer"
-                  title="Zoom Out"
-                >
-                  <ZoomOut className="w-4 h-4" />
-                </button>
-                {zoomLevel > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => { setZoomLevel(1); setPanOffset({ x: 0, y: 0 }); }}
-                    className="p-2 rounded-xl hover:bg-amber-400 hover:text-slate-950 text-amber-300 transition-colors cursor-pointer"
-                    title="Reset Zoom"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
             </div>
           )}
         </div>
       </div>
 
       {/* ==========================================================
-          6. SOCIAL ACTION BAR (Requirement 5 & 6: Lower-right, fixed position, NEVER auto-hides)
+          SIDE ACTION BAR (LIKE, COMMENT, SHARE, DOWNLOAD)
           ========================================================== */}
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="absolute right-3 sm:right-6 bottom-24 sm:bottom-28 z-40 flex flex-col items-center gap-4 sm:gap-5 pointer-events-auto"
+        className="absolute right-4 bottom-28 sm:right-6 sm:bottom-32 z-40 flex flex-col items-center gap-5 pointer-events-auto"
       >
         {/* Like Button */}
-        <div className="flex flex-col items-center group">
-          <button
-            type="button"
-            onClick={handleToggleLike}
-            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-2xl transition-all cursor-pointer border ${
-              hasLiked 
-                ? 'bg-pink-600/90 text-white border-pink-400 scale-110 shadow-[0_0_25px_rgba(236,72,153,0.6)]' 
-                : 'bg-black/60 hover:bg-black/90 text-white border-white/20 hover:scale-110'
-            }`}
-            title="Like Memory"
-          >
-            <Heart className={`w-6 h-6 sm:w-7 sm:h-7 ${hasLiked ? 'fill-current text-white animate-bounce' : 'text-white'}`} />
-          </button>
-          <span className="text-xs font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] mt-1.5 font-mono">
+        <button
+          type="button"
+          onClick={handleLikeClick}
+          className="group flex flex-col items-center gap-1 cursor-pointer focus:outline-none"
+        >
+          <div className={`w-12 h-12 rounded-full backdrop-blur-md border flex items-center justify-center shadow-2xl transition-all duration-300 ${
+            hasLiked 
+              ? 'bg-pink-600 border-pink-400 text-white scale-110 shadow-pink-500/30' 
+              : 'bg-black/60 border-white/20 text-white hover:bg-black/80 hover:scale-105'
+          }`}>
+            <Heart className={`w-6 h-6 transition-transform group-active:scale-125 ${hasLiked ? 'fill-current' : ''}`} />
+          </div>
+          <span className="text-[11px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)] font-mono">
             {likesCount}
           </span>
-        </div>
+        </button>
 
         {/* Comment Button */}
-        <div className="flex flex-col items-center group">
-          <button
-            type="button"
-            onClick={() => setIsCommentsOpen(true)}
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 flex items-center justify-center shadow-2xl hover:scale-110 transition-all cursor-pointer"
-            title="View Comments"
-          >
-            <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7 text-indigo-400" />
-          </button>
-          <span className="text-xs font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] mt-1.5 font-mono">
+        <button
+          type="button"
+          onClick={() => setIsCommentsOpen(!isCommentsOpen)}
+          className="group flex flex-col items-center gap-1 cursor-pointer focus:outline-none"
+        >
+          <div className="w-12 h-12 rounded-full bg-black/60 border border-white/20 text-white backdrop-blur-md flex items-center justify-center shadow-2xl hover:bg-black/80 hover:scale-105 transition-all">
+            <MessageSquare className="w-6 h-6 text-indigo-300 group-active:scale-125 transition-transform" />
+          </div>
+          <span className="text-[11px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)] font-mono">
             {comments.length}
           </span>
-        </div>
+        </button>
 
         {/* Share Button */}
-        <div className="relative flex flex-col items-center group">
-          <button
-            type="button"
-            onClick={() => handleShare()}
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 flex items-center justify-center shadow-2xl hover:scale-110 transition-all cursor-pointer"
-            title="Share Memory"
-          >
-            <Share2 className="w-6 h-6 sm:w-7 sm:h-7 text-sky-400" />
-          </button>
-          <span className="text-xs font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] mt-1.5 font-mono">
+        <button
+          type="button"
+          onClick={handleShare}
+          className="group flex flex-col items-center gap-1 cursor-pointer focus:outline-none"
+        >
+          <div className="w-12 h-12 rounded-full bg-black/60 border border-white/20 text-white backdrop-blur-md flex items-center justify-center shadow-2xl hover:bg-black/80 hover:scale-105 transition-all">
+            <Share2 className="w-6 h-6 text-amber-300 group-active:scale-125 transition-transform" />
+          </div>
+          <span className="text-[10px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)] uppercase">
             Share
           </span>
-
-          {/* Share Dropdown Menu (When Native Share is Unavailable) */}
-          {showShareMenu && (
-            <div className="absolute right-16 bottom-0 z-50 bg-slate-900/98 border border-white/20 rounded-2xl shadow-2xl p-3 w-52 space-y-2 text-left animate-in fade-in zoom-in-95 duration-200">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 block px-1">Share via</span>
-              <div className="grid grid-cols-1 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleShare('facebook')}
-                  className="w-full text-left px-3 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white text-xs font-semibold transition-all cursor-pointer flex items-center gap-2"
-                >
-                  <span>Facebook</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleShare('whatsapp')}
-                  className="w-full text-left px-3 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white text-xs font-semibold transition-all cursor-pointer flex items-center gap-2"
-                >
-                  <span>WhatsApp</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleShare('twitter')}
-                  className="w-full text-left px-3 py-2 rounded-xl bg-sky-600/20 hover:bg-sky-600 text-sky-300 hover:text-white text-xs font-semibold transition-all cursor-pointer flex items-center gap-2"
-                >
-                  <span>Twitter / X</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleShare('copy')}
-                  className="w-full text-left px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all cursor-pointer flex items-center justify-between"
-                >
-                  <span>Copy Link</span>
-                  {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        </button>
 
         {/* Download Button */}
-        <div className="flex flex-col items-center group">
-          <a
-            href={activeItem.mediaUrl}
-            download={`wisdom_link_graduation_${activeItem.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 flex items-center justify-center shadow-2xl hover:scale-110 transition-all cursor-pointer"
-            title="Download Original Media"
-          >
-            <Download className="w-6 h-6 sm:w-7 sm:h-7 text-emerald-400" />
-          </a>
-          <span className="text-xs font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] mt-1.5 font-mono">
+        <a
+          href={activeItem.mediaUrl}
+          download={`graduation_memory_${activeItem.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group flex flex-col items-center gap-1 cursor-pointer focus:outline-none"
+          title="Download Media"
+        >
+          <div className="w-12 h-12 rounded-full bg-black/60 border border-white/20 text-white backdrop-blur-md flex items-center justify-center shadow-2xl hover:bg-black/80 hover:scale-105 transition-all">
+            <Download className="w-6 h-6 text-emerald-300 group-active:scale-125 transition-transform" />
+          </div>
+          <span className="text-[10px] font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)] uppercase">
             Save
           </span>
-        </div>
+        </a>
       </div>
 
       {/* ==========================================================
-          7. CAPTION AREA (Requirement 7: Bottom-Left, Dark Gradient Background)
+          BOTTOM LEFT CAPTION & UPLOADER OVERLAY
           ========================================================== */}
-      <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/95 via-black/75 to-transparent pt-24 pb-6 px-4 sm:px-8 pointer-events-none text-left">
-        <div className="max-w-2xl pr-20 sm:pr-24 space-y-2 pointer-events-auto">
-          {/* Event Name & Type */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-amber-400 text-slate-950 shadow-md flex items-center gap-1">
-              <Sparkles className="w-3 h-3" />
-              <span>{activeItem.memoryType || 'Graduation'}</span>
+      <div 
+        onClick={(e) => e.stopPropagation()}
+        className="absolute bottom-6 left-4 right-20 sm:left-6 sm:right-32 z-30 pointer-events-auto space-y-2 text-left"
+      >
+        <div className="bg-black/60 backdrop-blur-md border border-white/15 p-4 rounded-2xl shadow-2xl space-y-2 max-w-xl">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span className="text-xs font-black text-amber-300 uppercase tracking-wider">
+              {activeItem.uploaderName || activeItem.uploadedByType || 'Graduation Memory'}
             </span>
-            <span className="px-3 py-1 rounded-full text-xs font-bold text-slate-200 bg-white/15 backdrop-blur-md border border-white/20">
-              {activeItem.eventName || `Class of ${activeItem.graduationYear || '2026'}`}
+            <span className="text-[10px] text-slate-400 font-mono">
+              • {activeItem.graduationYear}
             </span>
           </div>
 
-          {/* Caption */}
-          <h3 className="text-base sm:text-xl font-bold text-white leading-snug drop-shadow-lg line-clamp-3 font-display">
-            "{activeItem.caption || activeItem.title}"
-          </h3>
-
-          {/* Contributor Name & Upload Date */}
-          <div className="flex items-center gap-2 text-xs text-slate-300 font-medium pt-1">
-            <span className="flex items-center gap-1.5">
-              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-black text-[10px]">
-                {(activeItem.uploaderName || activeItem.uploadedByType || 'U').charAt(0).toUpperCase()}
-              </div>
-              <span>Shared by <strong className="text-amber-300 font-bold">{activeItem.uploaderName || activeItem.uploadedByType || 'Community Member'}</strong></span>
-            </span>
-            <span className="text-white/40">•</span>
-            <span>{new Date(activeItem.createdAt || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-          </div>
+          <p className="text-xs sm:text-sm text-white font-medium line-clamp-3 leading-relaxed drop-shadow-md">
+            "{activeItem.caption || activeItem.title || 'Graduation ceremony memory'}"
+          </p>
         </div>
       </div>
 
       {/* ==========================================================
-          COMMENTS PANEL (Slide-In Drawer from Right - Requirement 10: Preserve existing features)
+          COMMENTS DRAWER SLIDE-OVER
           ========================================================== */}
       {isCommentsOpen && (
         <div 
           onClick={(e) => e.stopPropagation()}
-          className="fixed top-0 right-0 bottom-0 w-full sm:w-[420px] bg-slate-900/98 backdrop-blur-2xl border-l border-white/10 z-[1000000] flex flex-col shadow-[0_0_60px_rgba(0,0,0,0.9)] animate-in slide-in-from-right duration-300 text-left pointer-events-auto"
+          className="absolute inset-y-0 right-0 z-50 w-full sm:w-96 bg-slate-950/95 border-l border-white/10 backdrop-blur-2xl p-6 flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-300 pointer-events-auto"
         >
-          {/* Panel Header */}
-          <div className="p-5 border-b border-white/10 bg-slate-900 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2.5">
-              <MessageSquare className="w-5 h-5 text-indigo-400" />
-              <h4 className="text-sm font-black text-white uppercase tracking-wider font-display">
-                Comments ({comments.length})
-              </h4>
+          <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Comments ({comments.length})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCommentsOpen(false)}
+                className="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsCommentsOpen(false)}
-              className="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
-              title="Close Comments Panel"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
 
-          {/* Notice: Approved comments only */}
-          <div className="px-5 py-2.5 bg-slate-950/60 border-b border-white/5 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Community memories & well-wishes</span>
-            <span className="text-amber-300 font-semibold">✓ Approved only</span>
-          </div>
-
-          {/* Comments List (Scrollable Middle) */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-3.5 custom-scrollbar bg-slate-950/40">
-            {commentSuccessNotice && (
-              <div className="p-3.5 bg-emerald-950/90 border border-emerald-500/40 text-emerald-200 text-xs rounded-2xl flex items-center gap-2.5 animate-in fade-in duration-200 shadow-md">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                <span className="font-medium leading-relaxed">Comment submitted successfully! It has been placed in the administrator pending queue for review.</span>
-              </div>
-            )}
-
-            {comments.length === 0 ? (
-              <div className="py-16 text-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto text-slate-500">
-                  <MessageSquare className="w-6 h-6 opacity-60" />
+            {/* Comment List */}
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-left">
+              {comments.length === 0 ? (
+                <div className="text-center py-12 space-y-2 text-slate-500">
+                  <MessageSquare className="w-8 h-8 mx-auto opacity-30" />
+                  <p className="text-xs font-medium">No comments yet. Be the first to leave a warm message!</p>
                 </div>
-                <p className="text-xs text-slate-300 font-bold">No approved comments yet</p>
-                <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
-                  Be the first to leave a congratulatory note or share a fond memory for the Class of {activeItem.graduationYear}!
-                </p>
-              </div>
-            ) : (
-              comments.map(c => (
-                <div key={c.id} className="p-4 bg-slate-900/90 rounded-2xl border border-white/10 text-xs space-y-2 shadow-sm hover:border-white/20 transition-all">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-amber-300 text-xs">{c.authorName}</span>
-                    <span className="text-slate-500 text-[10px] font-mono">{new Date(c.createdAt).toLocaleDateString()}</span>
+              ) : (
+                comments.map((comment) => (
+                  <div key={comment.id} className="bg-slate-900/80 border border-white/5 rounded-xl p-3 space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-amber-300">{comment.authorName}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {comment.createdAt?.toDate ? comment.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-200 leading-relaxed">{comment.text || (comment as any).commentText}</p>
                   </div>
-                  <p className="text-slate-200 leading-relaxed">{c.text}</p>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
 
-          {/* Sticky Comment Form at Bottom */}
-          <div className="p-5 border-t border-white/10 bg-slate-900 shrink-0 space-y-3">
-            <form onSubmit={handlePostComment} className="space-y-3">
-              <div>
-                <input
-                  type="text"
-                  value={newCommentName}
-                  onChange={(e) => setNewCommentName(e.target.value)}
-                  placeholder="Your Name (Optional)"
-                  className="w-full p-3 rounded-xl bg-slate-950 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-all font-medium"
-                />
+          {/* Add Comment Form */}
+          <form onSubmit={handleAddComment} className="pt-4 border-t border-white/10 space-y-2 text-left">
+            {commentSuccessNotice && (
+              <div className="p-2 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Comment added successfully!</span>
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  required
-                  value={newCommentText}
-                  onChange={(e) => setNewCommentText(e.target.value)}
-                  placeholder="Write a congratulatory message..."
-                  className="flex-1 p-3 rounded-xl bg-slate-950 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 transition-all font-medium"
-                />
-                <button
-                  type="submit"
-                  disabled={commentSubmitting}
-                  className="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 disabled:opacity-50 flex items-center gap-1.5 shadow-lg active:scale-95"
-                >
-                  {commentSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /><span>Send</span></>}
-                </button>
-              </div>
-              <p className="text-[10px] text-slate-400 text-center italic">
-                All submitted comments are directed to the admin pending workflow before appearing publicly.
-              </p>
-            </form>
+            )}
+            <input
+              type="text"
+              value={newCommentName}
+              onChange={(e) => setNewCommentName(e.target.value)}
+              placeholder="Your name (optional)"
+              className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newCommentText}
+                onChange={(e) => setNewCommentText(e.target.value)}
+                placeholder="Write a comment..."
+                className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+              />
+              <button
+                type="submit"
+                disabled={!newCommentText.trim() || commentSubmitting}
+                className="p-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 disabled:opacity-40 transition-all cursor-pointer"
+              >
+                {commentSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ==========================================================
+          SHARE MODAL POPUP
+          ========================================================== */}
+      {showShareMenu && (
+        <div 
+          onClick={(e) => { e.stopPropagation(); setShowShareMenu(false); }}
+          className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-900 border border-white/15 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-left"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-amber-400" />
+                <span>Share Graduation Memory</span>
+              </h3>
+              <button
+                onClick={() => setShowShareMenu(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Copy link to share this graduation memory with alumni, friends, and family.
+            </p>
+
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="text"
+                readOnly
+                value={window.location.href}
+                className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-slate-300 font-mono truncate"
+              />
+              <button
+                onClick={copyToClipboard}
+                className="px-4 py-2 rounded-xl bg-amber-400 text-slate-950 text-xs font-bold hover:bg-amber-300 transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedLink ? 'Copied!' : 'Copy'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

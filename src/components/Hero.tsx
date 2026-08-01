@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Camera, Calendar, ArrowDown, ChevronLeft, ChevronRight, Shuffle, HardDrive, Users, FolderHeart, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Memory } from '../types';
+import { Memory, GraduationMemory } from '../types';
 import { db } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
+import { subscribeApprovedGraduationMemories } from '../services/firebaseService';
 
 interface HeroSlide {
   id: string;
@@ -160,6 +161,16 @@ export default function Hero({ customMemories = [] }: HeroProps) {
     return () => unsub();
   }, []);
   
+  // Real-time approved graduation ceremony gallery memories subscription
+  const [gradMemories, setGradMemories] = useState<GraduationMemory[]>([]);
+
+  useEffect(() => {
+    const unsubGrad = subscribeApprovedGraduationMemories((mems) => {
+      setGradMemories(mems);
+    });
+    return () => unsubGrad();
+  }, []);
+
   // 5 active polaroid card slots on screen
   const [slots, setSlots] = useState<ImagePayload[]>([]);
   const recentlyUsedRef = useRef<string[]>([]);
@@ -172,57 +183,86 @@ export default function Hero({ customMemories = [] }: HeroProps) {
     stories: 42
   });
 
-  // 1. Compute and track all approved images from Firestore + fallsbacks
+  // 1. Compute and track all approved image media directly from Graduation Ceremony Gallery
   useEffect(() => {
-    // Collect all unique approved image memories
-    const liveImages: ImagePayload[] = customMemories
+    // Filter ONLY approved image media from Graduation Ceremony Gallery (videos strictly excluded)
+    const approvedGraduationImages = gradMemories.filter(
+      m => m.mediaType === 'image' && m.status === 'Approved' && !m.id.startsWith('ceremony-fallback-')
+    );
+
+    // Map to ImagePayload format for Hero floating album using optimized thumbnail URLs
+    const liveGraduationImages: ImagePayload[] = approvedGraduationImages.map(m => ({
+      id: m.id,
+      url: m.thumbnailUrl || m.mediaUrl,
+      label: m.title || m.caption || 'Graduation Memory',
+      desc: m.caption || m.title || 'Real graduation memory from the gallery.',
+      date: m.uploaderName ? `${m.uploaderName} • Class of ${m.graduationYear || '2026'}` : `Class of ${m.graduationYear || '2026'}`
+    }));
+
+    // Fallback: Also check customMemories if passed from parent
+    const fallbackUserImages: ImagePayload[] = customMemories
       .filter(m => m.category !== 'video' && m.imageUrl)
       .map(m => ({
         id: m.id,
         url: m.imageUrl,
         label: m.title || m.tag || 'School Memory',
-        desc: m.description || 'Approved school memories archive.',
+        desc: m.description || 'Approved school memory.',
         date: m.date || 'Class of 2026'
       }));
 
-    // Merge with high-quality fallback pool to ensure rich selection and prevent empty states
+    // Prefer live Graduation Ceremony Gallery images; then user photo memories
+    let primarySource = liveGraduationImages;
+    if (primarySource.length === 0 && fallbackUserImages.length > 0) {
+      primarySource = fallbackUserImages;
+    }
+
     const combined: ImagePayload[] = [];
     const URLs = new Set<string>();
 
-    liveImages.forEach(img => {
+    primarySource.forEach(img => {
       if (!URLs.has(img.url)) {
         URLs.add(img.url);
         combined.push(img);
       }
     });
 
-    FALLBACK_COLLAGE_POOL.forEach(img => {
-      if (!URLs.has(img.url)) {
-        URLs.add(img.url);
-        combined.push(img);
-      }
-    });
+    // Only if NO real approved user images exist at all, temporarily display default hero placeholders
+    if (combined.length === 0) {
+      FALLBACK_COLLAGE_POOL.forEach(img => {
+        if (!URLs.has(img.url)) {
+          URLs.add(img.url);
+          combined.push(img);
+        }
+      });
+    }
 
     allAvailableImagesRef.current = combined;
 
     // Update Live stats dynamically
     setLiveStats({
-      files: 1420 + liveImages.length,
+      files: 1420 + primarySource.length,
       graduands: 186,
-      stories: 42 + liveImages.length
+      stories: 42 + primarySource.length
     });
 
-    // Initialize Slots if empty
-    if (slots.length === 0 && combined.length > 0) {
+    // Check if current slots are placeholders
+    const isUsingPlaceholders = slots.some(s => FALLBACK_COLLAGE_POOL.some(f => f.url === s.url));
+    const hasRealNow = primarySource.length > 0;
+
+    // Initialize or replace placeholders automatically as soon as real graduation photos exist
+    if (slots.length === 0 || (isUsingPlaceholders && hasRealNow)) {
       const initialSlots: ImagePayload[] = [];
       const shuffled = [...combined].sort(() => 0.5 - Math.random());
       for (let i = 0; i < Math.min(5, shuffled.length); i++) {
         initialSlots.push(shuffled[i]);
-        recentlyUsedRef.current.push(shuffled[i].url);
+      }
+      while (initialSlots.length < 5 && shuffled.length > 0) {
+        initialSlots.push(shuffled[initialSlots.length % shuffled.length]);
       }
       setSlots(initialSlots);
+      recentlyUsedRef.current = initialSlots.map(s => s.url);
     }
-  }, [customMemories]);
+  }, [gradMemories, customMemories]);
 
   // 2. Preload upcoming images in the background to ensure high performance
   useEffect(() => {

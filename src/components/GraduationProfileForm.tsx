@@ -11,7 +11,7 @@ import {
   saveGraduationStudent 
 } from '../services/firebaseService';
 import { compressImage } from '../lib/imageCompressor';
-import { stageOrUploadMedia } from '../utils/uploadHelper';
+import { stageOrUploadMedia, uploadMultipleImagesSequentially } from '../utils/uploadHelper';
 import { generateBioSummary } from '../utils/bioSummary';
 
 interface GraduationProfileFormProps {
@@ -153,17 +153,21 @@ export default function GraduationProfileForm({ onBackToHome }: GraduationProfil
     setIsUploadingGallery(true);
 
     try {
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const uploadResult = await stageOrUploadMedia(file, { folder: 'scholars_class_2026' });
-        const finalUrl = uploadResult.secure_url || uploadResult.url;
-        if (finalUrl) {
-          uploadedUrls.push(finalUrl);
-        }
+      const summary = await uploadMultipleImagesSequentially(files, {
+        folder: 'scholars_class_2026'
+      });
+
+      const newUrls: string[] = summary.results
+        .filter((r) => r.success && r.result?.url)
+        .map((r) => r.result!.secure_url || r.result!.url);
+
+      if (newUrls.length > 0) {
+        setGalleryImages((prev) => [...prev, ...newUrls]);
       }
 
-      setGalleryImages([...galleryImages, ...uploadedUrls]);
+      if (summary.failed > 0) {
+        alert(`Uploaded successfully: ${summary.successful}, Failed: ${summary.failed}`);
+      }
     } catch (err: any) {
       alert(`Some files failed to transfer: ${err.message}`);
     } finally {
