@@ -333,97 +333,103 @@ export async function uploadMultipleImagesSequentially(
   for (let i = 0; i < fileArray.length; i++) {
     const file = fileArray[i];
     try {
+      let uploadResult: UploadResult;
       const isVideo = file.type.startsWith("video/") || /\.(mp4|mov|webm|avi|mkv)$/i.test(file.name);
       const resourceType = isVideo ? "video" : "image";
 
-      // 1. Request a brand-new Cloudinary signature for THIS image
-      const sigUrl = `/api/cloudinary-signature?folder=${encodeURIComponent(folder)}&resource_type=${resourceType}&t=${Date.now()}_${i}`;
-      const sigRes = await fetch(sigUrl);
-      if (!sigRes.ok) {
-        const errText = await sigRes.text();
-        throw new Error(`Cloudinary signature request failed (HTTP ${sigRes.status}): ${errText}`);
-      }
-
-      const sigData = await sigRes.json();
-      if (!sigData.signature || !sigData.apiKey || !sigData.cloudName) {
-        throw new Error("Invalid Cloudinary signature payload received from server.");
-      }
-
-      // 2. Create a brand-new FormData for THIS image
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("api_key", sigData.apiKey);
-      formData.append("timestamp", sigData.timestamp.toString());
-      if (sigData.folder) {
-        formData.append("folder", sigData.folder);
-      }
-      if (sigData.eager) {
-        formData.append("eager", sigData.eager);
-      }
-      if (sigData.eager_async) {
-        formData.append("eager_async", sigData.eager_async);
-      }
-      if (sigData.notification_url) {
-        formData.append("notification_url", sigData.notification_url);
-      }
-      formData.append("signature", sigData.signature);
-
-      // 3. Create a brand-new XMLHttpRequest for THIS image
-      const uploadResult = await new Promise<UploadResult>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${resourceType}/upload`;
-
-        xhr.open("POST", uploadUrl, true);
-        xhr.timeout = 10 * 60 * 1000;
-
-        if (xhr.upload && options.onProgress) {
-          xhr.upload.onprogress = (evt) => {
-            if (evt.lengthComputable && evt.total > 0) {
-              const pct = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
-              options.onProgress?.(i, fileArray.length, pct, file);
-            }
-          };
+      try {
+        // 1. Request a brand-new Cloudinary signature for THIS image
+        const sigUrl = `/api/cloudinary-signature?folder=${encodeURIComponent(folder)}&resource_type=${resourceType}&t=${Date.now()}_${i}`;
+        const sigRes = await fetch(sigUrl);
+        if (!sigRes.ok) {
+          const errText = await sigRes.text();
+          throw new Error(`Cloudinary signature request failed (HTTP ${sigRes.status}): ${errText}`);
         }
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const resJson = JSON.parse(xhr.responseText);
-              const url = resJson.secure_url || resJson.url;
-              if (url) {
-                resolve({
-                  url,
-                  secure_url: url,
-                  public_id: resJson.public_id,
-                  format: resJson.format,
-                  resource_type: resJson.resource_type || resourceType
-                });
-              } else {
-                reject(new Error(`Upload succeeded with HTTP ${xhr.status} but returned no media URL.`));
+        const sigData = await sigRes.json();
+        if (!sigData.signature || !sigData.apiKey || !sigData.cloudName) {
+          throw new Error("Invalid Cloudinary signature payload received from server.");
+        }
+
+        // 2. Create a brand-new FormData for THIS image
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("api_key", sigData.apiKey);
+        formData.append("timestamp", sigData.timestamp.toString());
+        if (sigData.folder) {
+          formData.append("folder", sigData.folder);
+        }
+        if (sigData.eager) {
+          formData.append("eager", sigData.eager);
+        }
+        if (sigData.eager_async) {
+          formData.append("eager_async", sigData.eager_async);
+        }
+        if (sigData.notification_url) {
+          formData.append("notification_url", sigData.notification_url);
+        }
+        formData.append("signature", sigData.signature);
+
+        // 3. Create a brand-new XMLHttpRequest for THIS image
+        uploadResult = await new Promise<UploadResult>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          const uploadUrl = `https://api.cloudinary.com/v1_1/${sigData.cloudName}/${resourceType}/upload`;
+
+          xhr.open("POST", uploadUrl, true);
+          xhr.timeout = 10 * 60 * 1000;
+
+          if (xhr.upload && options.onProgress) {
+            xhr.upload.onprogress = (evt) => {
+              if (evt.lengthComputable && evt.total > 0) {
+                const pct = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+                options.onProgress?.(i, fileArray.length, pct, file);
               }
-            } catch (pErr: any) {
-              reject(new Error(`Failed to parse response JSON: ${pErr?.message || pErr}`));
-            }
-          } else {
-            let errMsg = `HTTP ${xhr.status}`;
-            try {
-              const resJson = JSON.parse(xhr.responseText);
-              errMsg = resJson?.error?.message || resJson?.error || errMsg;
-            } catch (e) {
-              errMsg = xhr.responseText || errMsg;
-            }
-            reject(new Error(`Cloudinary upload HTTP error: ${errMsg}`));
+            };
           }
-        };
 
-        xhr.onerror = () => reject(new Error(`XHR network error uploading ${file.name}`));
-        xhr.ontimeout = () => reject(new Error(`XHR upload timed out for ${file.name}`));
-        xhr.onabort = () => reject(new Error(`XHR upload aborted for ${file.name}`));
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const resJson = JSON.parse(xhr.responseText);
+                const url = resJson.secure_url || resJson.url;
+                if (url) {
+                  resolve({
+                    url,
+                    secure_url: url,
+                    public_id: resJson.public_id,
+                    format: resJson.format,
+                    resource_type: resJson.resource_type || resourceType
+                  });
+                } else {
+                  reject(new Error(`Upload succeeded with HTTP ${xhr.status} but returned no media URL.`));
+                }
+              } catch (pErr: any) {
+                reject(new Error(`Failed to parse response JSON: ${pErr?.message || pErr}`));
+              }
+            } else {
+              let errMsg = `HTTP ${xhr.status}`;
+              try {
+                const resJson = JSON.parse(xhr.responseText);
+                errMsg = resJson?.error?.message || resJson?.error || errMsg;
+              } catch (e) {
+                errMsg = xhr.responseText || errMsg;
+              }
+              reject(new Error(`Cloudinary upload HTTP error: ${errMsg}`));
+            }
+          };
 
-        xhr.send(formData);
-      });
+          xhr.onerror = () => reject(new Error(`XHR network error uploading ${file.name}`));
+          xhr.ontimeout = () => reject(new Error(`XHR upload timed out for ${file.name}`));
+          xhr.onabort = () => reject(new Error(`XHR upload aborted for ${file.name}`));
 
-      // 4. Save to Firestore immediately upon Cloudinary success
+          xhr.send(formData);
+        });
+      } catch (directErr: any) {
+        console.warn(`[uploadMultipleImagesSequentially] Direct signature upload failed for "${file.name}". Using UploadManagerV2 fallback pipeline:`, directErr);
+        uploadResult = await uploadManagerV2.enqueue(file, { folder });
+      }
+
+      // 4. Save to Firestore immediately upon success
       if (options.onWriteFirestore) {
         await options.onWriteFirestore(file, uploadResult);
       }

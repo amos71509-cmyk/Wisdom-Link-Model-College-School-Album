@@ -56,6 +56,7 @@ import {
 } from '../services/firebaseService';
 import GraduationManagementTab from './GraduationManagementTab';
 import AdminGraduationCeremonyCMS from './AdminGraduationCeremonyCMS';
+import { FEATURED_EVENTS } from '../data/schoolData';
 
 interface AdminPortalProps {
   isOpen: boolean;
@@ -582,7 +583,13 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
     const unsubSchoolEvents = onSnapshot(doc(db, "cms_content", "school_events"), (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.events) setSchoolEvents(data.events);
+        if (data.events && data.events.length > 0) {
+          setSchoolEvents(data.events);
+        } else {
+          setSchoolEvents(FEATURED_EVENTS);
+        }
+      } else {
+        setSchoolEvents(FEATURED_EVENTS);
       }
     });
 
@@ -4254,8 +4261,25 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                       CMS SUB-TAB: FEATURED EVENTS
                       ---------------------------------------------------- */}
                   {cmsSubTab === 'events' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-left">
-                      {/* Left column: Add/Edit Event */}
+                    <div className="space-y-6 text-left">
+                      {/* Preserved Milestones Management Header Banner */}
+                      <div className="bg-gradient-to-r from-amber-500/15 via-indigo-500/10 to-amber-500/15 border border-amber-400/30 p-4 sm:p-5 rounded-2xl flex items-start gap-3.5 shadow-lg">
+                        <div className="p-2 bg-amber-500/20 rounded-xl border border-amber-400/30 shrink-0">
+                          <Sparkles className="w-5 h-5 text-amber-300" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-black text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                            <span>Preserved Milestones & School Events CMS</span>
+                            <span className="px-2 py-0.5 bg-amber-500/20 text-amber-200 text-[10px] rounded-full border border-amber-400/30 font-mono">Firestore Doc: cms_content/school_events</span>
+                          </h4>
+                          <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+                            Upload or change cover thumbnails and details for any official school event (Graduation Ceremony, Sports Day, Cultural Day, Prize Giving, etc.). Any modified event or thumbnail is automatically saved to the Firestore database collection and instantly updates the live homepage sliding carousel.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {/* Left column: Add/Edit Event */}
                       <div className="lg:col-span-5 bg-slate-950/40 border border-white/5 p-6 rounded-2xl space-y-5">
                         <h3 className="text-sm font-extrabold text-white uppercase tracking-wider border-b border-white/5 pb-2">
                           {editingSchoolEvent ? 'Modify Event Entry' : 'Configure New Event'}
@@ -4506,7 +4530,8 @@ export default function AdminPortal({ isOpen, onClose, activePalette, cleanUpMod
                         )}
                       </div>
                     </div>
-                  )}
+                  </div>
+                )}
 
                   {/* ----------------------------------------------------
                       CMS SUB-TAB: FOOTER SETTINGS

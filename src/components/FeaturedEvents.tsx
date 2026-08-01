@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Calendar, ArrowRight, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, ArrowRight, ArrowLeft, Sparkles, ChevronLeft, ChevronRight } from 'lucide-react';
 import { FEATURED_EVENTS } from '../data/schoolData';
 import { db } from '../firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -64,7 +64,7 @@ export default function FeaturedEvents() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Section Title */}
-        <div className="text-center max-w-3xl mx-auto mb-12">
+        <div className="text-center max-w-3xl mx-auto mb-8">
           <span className="text-xs font-bold uppercase tracking-widest text-[var(--accent)] glass-pill px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5 mb-3">
             <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
             <span>Preserved Milestones</span>
@@ -78,29 +78,61 @@ export default function FeaturedEvents() {
           <div className="h-1 w-20 bg-[var(--accent)] mx-auto mt-4 rounded-full" />
         </div>
 
-        {/* Side Scrollable Events Container */}
-        <div className="relative group/scroll px-2 sm:px-0">
-          {/* Navigation Arrows for Desktop */}
+        {/* Bouncing Arrow Indicator Bar & Manual Slide Controls */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6 max-w-4xl mx-auto bg-amber-500/10 border-2 border-amber-400/80 p-3.5 sm:px-6 sm:py-3 rounded-2xl backdrop-blur-md shadow-md">
+          {/* Left Arrow Bounce */}
           <button
             onClick={() => handleScroll('left')}
-            className="hidden sm:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/90 hover:bg-white text-gray-800 rounded-full shadow-xl border border-gray-200 items-center justify-center transition-all hover:scale-110 active:scale-95"
-            aria-label="Scroll left"
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer shrink-0"
           >
-            <ChevronLeft className="w-5 h-5 text-gray-700" />
+            <ChevronLeft className="w-4 h-4 text-white animate-bounce" style={{ animationDirection: 'reverse' }} />
+            <span>Scroll Left</span>
           </button>
 
+          {/* Center Bouncing Banner */}
+          <div className="flex items-center gap-2 text-xs font-extrabold text-amber-900 uppercase tracking-wide text-center">
+            <ArrowLeft className="w-4 h-4 text-amber-600 animate-pulse" />
+            <span>Slide or Swipe Left & Right to Explore All Milestones</span>
+            <ArrowRight className="w-4 h-4 text-amber-600 animate-pulse" />
+          </div>
+
+          {/* Right Arrow Bounce */}
           <button
             onClick={() => handleScroll('right')}
-            className="hidden sm:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/90 hover:bg-white text-gray-800 rounded-full shadow-xl border border-gray-200 items-center justify-center transition-all hover:scale-110 active:scale-95"
-            aria-label="Scroll right"
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md hover:scale-105 active:scale-95 cursor-pointer shrink-0"
           >
-            <ChevronRight className="w-5 h-5 text-gray-700" />
+            <span>Scroll Right</span>
+            <ChevronRight className="w-4 h-4 text-white animate-bounce" />
+          </button>
+        </div>
+
+        {/* Side Scrollable Events Container */}
+        <div className="relative group/scroll px-1 sm:px-4">
+          
+          {/* Highlighted Left Navigation Arrow */}
+          <button
+            onClick={() => handleScroll('left')}
+            className="flex absolute -left-2 sm:-left-5 top-1/2 -translate-y-1/2 z-30 w-11 h-11 sm:w-13 sm:h-13 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-full shadow-2xl border-2 border-white ring-4 ring-amber-500/30 items-center justify-center transition-all hover:scale-110 active:scale-95 cursor-pointer"
+            aria-label="Scroll left"
+            title="Slide left"
+          >
+            <ChevronLeft className="w-6 h-6 text-white stroke-[3]" />
+          </button>
+
+          {/* Highlighted Right Navigation Arrow */}
+          <button
+            onClick={() => handleScroll('right')}
+            className="flex absolute -right-2 sm:-right-5 top-1/2 -translate-y-1/2 z-30 w-11 h-11 sm:w-13 sm:h-13 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-full shadow-2xl border-2 border-white ring-4 ring-amber-500/30 items-center justify-center transition-all hover:scale-110 active:scale-95 cursor-pointer"
+            aria-label="Scroll right"
+            title="Slide right"
+          >
+            <ChevronRight className="w-6 h-6 text-white stroke-[3] animate-pulse" />
           </button>
 
           {/* Side Scroll Track */}
           <div
             ref={scrollRef}
-            className="flex gap-6 overflow-x-auto snap-x snap-mandatory pb-6 pt-2 px-1 scrollbar-none scroll-smooth"
+            className="flex gap-6 overflow-x-auto snap-x snap-mandatory pb-6 pt-2 px-2 scrollbar-none scroll-smooth"
             id="events-grid"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
@@ -162,10 +194,11 @@ export default function FeaturedEvents() {
             ))}
           </div>
 
-          {/* Swipe indicator hint on mobile */}
-          <div className="flex items-center justify-center gap-2 text-[11px] font-semibold text-gray-400 mt-2 sm:hidden">
-            <span>Swipe sideways to view all milestones</span>
-            <ArrowRight className="w-3.5 h-3.5 text-[var(--accent)] animate-pulse" />
+          {/* Mobile indicator notice */}
+          <div className="flex items-center justify-center gap-2 text-[11px] font-extrabold text-amber-700 mt-2">
+            <ArrowLeft className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+            <span>Use side arrows or swipe left/right to view all school milestone galleries</span>
+            <ArrowRight className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
           </div>
         </div>
 

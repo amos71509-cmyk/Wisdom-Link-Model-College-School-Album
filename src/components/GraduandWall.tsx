@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Users, GraduationCap, Heart, Trash2, ArrowRight, UploadCloud, Sparkles, Maximize2 } from 'lucide-react';
+import { Users, GraduationCap, Heart, Trash2, ArrowRight, UploadCloud, Sparkles, Maximize2, UserCheck, AlertCircle } from 'lucide-react';
 import { Student, GraduationStudent } from '../types';
 import StudentAlbumImage from './StudentAlbumImage';
 import { getOptimizedImageUrl } from '../utils/imageUtils';
@@ -179,16 +179,39 @@ export default function GraduandWall({ cleanUpMode, onUploadClick, onViewAllClic
           <div className="h-1 w-20 bg-amber-500 mx-auto mt-4 rounded-full" />
         </div>
 
-        {/* Upload Button Block at the Top of section */}
-        <div className="flex justify-center mb-12">
-          <button
-            onClick={onUploadClick}
-            className="px-8 py-4 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 text-white rounded-2xl text-sm font-black tracking-wider uppercase transition-all shadow-xl hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 cursor-pointer flex items-center gap-2.5 group"
-            id="homepage-upload-grad-profile-btn"
-          >
-            <UploadCloud className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            <span>Upload Your Graduation Profile</span>
-          </button>
+        {/* Upload Button & Graduand Notice Card Block */}
+        <div className="max-w-2xl mx-auto mb-14 text-center">
+          <div className="relative group p-6 sm:p-7 bg-gradient-to-b from-amber-500/10 via-amber-500/5 to-amber-500/10 border-2 border-amber-400/80 rounded-3xl shadow-2xl backdrop-blur-md space-y-4 transition-all hover:border-amber-500 hover:shadow-amber-500/20">
+            
+            {/* Top Restriction Badge */}
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-amber-600 to-amber-500 text-white rounded-full text-[11px] font-black uppercase tracking-widest shadow-md">
+              <UserCheck className="w-4 h-4 text-amber-100 animate-pulse" />
+              <span>Strictly Reserved For Graduating Class Members Only</span>
+            </div>
+
+            {/* Explanatory Message */}
+            <p className="text-xs sm:text-sm text-slate-800 font-bold leading-relaxed max-w-lg mx-auto">
+              Notice: This profile submission portal is strictly meant for <span className="text-amber-700 underline underline-offset-2">graduating students (graduands)</span> of the current graduating year to submit their official portrait photo, favorite memory, and aspirations.
+            </p>
+
+            {/* High Impact Action Button */}
+            <div className="pt-2 flex flex-col items-center gap-2">
+              <button
+                onClick={onUploadClick}
+                className="relative px-8 py-4 bg-gradient-to-r from-amber-500 via-amber-600 to-indigo-600 hover:from-amber-600 hover:via-amber-700 hover:to-indigo-700 text-white rounded-2xl text-xs sm:text-sm font-black tracking-wider uppercase transition-all shadow-xl hover:shadow-2xl hover:shadow-amber-500/30 hover:-translate-y-1 active:translate-y-0 cursor-pointer flex items-center justify-center gap-3 group ring-4 ring-amber-400/40 w-full sm:w-auto"
+                id="homepage-upload-grad-profile-btn"
+              >
+                <div className="p-2 bg-white/20 rounded-xl group-hover:scale-110 transition-transform">
+                  <UploadCloud className="w-5 h-5 text-white" />
+                </div>
+                <div className="text-left">
+                  <span className="block text-white font-black text-xs sm:text-sm tracking-wide">Upload Your Graduation Profile</span>
+                  <span className="block text-[10px] text-amber-100 font-bold normal-case">Graduands Only • Year 2026 Profile Portal</span>
+                </div>
+                <Sparkles className="w-4 h-4 text-amber-200 animate-spin ml-1 hidden sm:inline-block" style={{ animationDuration: '4s' }} />
+              </button>
+            </div>
+          </div>
         </div>
 
         {featuredStudents.length === 0 ? (

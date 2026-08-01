@@ -102,11 +102,45 @@ class UploadManagerV2Service {
       const resourceType = isVideo ? "video" : (isImage ? "image" : "auto");
       const folder = options.folder || "scholars_class_2026";
 
-      // Direct Cloudinary upload via XHR - expose real exception immediately
-      const uploadResult: UploadResult = await this.performDirectCloudinaryUpload(task, file, folder, resourceType, startTime);
+      let uploadResult: UploadResult | null = null;
+      let lastError: Error | null = null;
+
+      // Stage A: Direct Cloudinary Signed Upload
+      try {
+        uploadResult = await this.performDirectCloudinaryUpload(task, file, folder, resourceType, startTime);
+      } catch (directErr: any) {
+        console.warn(`[UploadManagerV2] Direct Cloudinary upload failed for "${file.name}":`, directErr?.message || directErr);
+        lastError = directErr instanceof Error ? directErr : new Error(String(directErr));
+      }
+
+      // Stage B: Express Server Proxy Upload (/api/upload)
+      if (!uploadResult || !uploadResult.url) {
+        try {
+          console.log(`[UploadManagerV2] Attempting fallback to Express proxy /api/upload for "${file.name}"...`);
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("folder", folder);
+          uploadResult = await this.performServerProxyUpload(task, formData, file.size, startTime);
+        } catch (proxyErr: any) {
+          console.warn(`[UploadManagerV2] Express proxy upload failed for "${file.name}":`, proxyErr?.message || proxyErr);
+          if (!lastError) lastError = proxyErr instanceof Error ? proxyErr : new Error(String(proxyErr));
+        }
+      }
+
+      // Stage C: Base64 Data URL Fallback for images
+      if (!uploadResult || !uploadResult.url) {
+        if (isImage) {
+          console.log(`[UploadManagerV2] Generating Base64 Data URL fallback for "${file.name}"...`);
+          try {
+            uploadResult = await this.generateBase64Fallback(file);
+          } catch (b64Err: any) {
+            console.error(`[UploadManagerV2] Base64 fallback failed for "${file.name}":`, b64Err);
+          }
+        }
+      }
 
       if (!uploadResult || !uploadResult.url) {
-        throw new Error(`Upload failed for "${file.name}": returned empty media URL.`);
+        throw lastError || new Error(`Upload failed for "${file.name}": empty media URL returned from all upload targets.`);
       }
 
       // Step 3: Verifying Cloudinary output
@@ -124,8 +158,10 @@ class UploadManagerV2Service {
         } catch (fsErr: any) {
           console.error(`[UploadManagerV2] Firestore write error for file "${file.name}":`, fsErr);
           if (fsErr?.stack) console.error(`[UploadManagerV2] Firestore write stack trace:`, fsErr.stack);
-          // Scrub orphan Cloudinary asset if DB fails
-          await this.deleteCloudinaryAsset(uploadResult.secure_url || uploadResult.url);
+          // Scrub orphan Cloudinary asset if DB fails and asset was stored on Cloudinary
+          if (uploadResult.secure_url?.includes("cloudinary.com")) {
+            await this.deleteCloudinaryAsset(uploadResult.secure_url || uploadResult.url);
+          }
           throw new Error(`Failed to save record to database: ${fsErr?.message || String(fsErr)}`);
         }
       }
@@ -142,6 +178,35 @@ class UploadManagerV2Service {
       this.updateProgress(task, 0, 'error', err?.message || 'Upload failed', file.size, 0);
       task.reject(err);
     }
+  }
+
+  /**
+   * Generates a compressed Base64 Data URL fallback for image files
+   */
+  private async generateBase64Fallback(file: File): Promise<UploadResult> {
+    return new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const resStr = reader.result as string;
+          if (resStr && typeof resStr === "string") {
+            resolve({
+              url: resStr,
+              secure_url: resStr,
+              public_id: `b64_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+              format: file.name.split('.').pop() || "jpg",
+              resource_type: "image"
+            });
+          } else {
+            reject(new Error("FileReader produced invalid or empty result."));
+          }
+        };
+        reader.onerror = () => reject(new Error("FileReader failed to read image file."));
+        reader.readAsDataURL(file);
+      } catch (e: any) {
+        reject(new Error(`Base64 fallback exception: ${e?.message || String(e)}`));
+      }
+    });
   }
 
   /**
